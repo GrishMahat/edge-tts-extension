@@ -16,6 +16,7 @@ import {
 import { TTSConfig } from './ttsConfig';
 import { DEFAULT_VOICE, WSS_URL, SEC_MS_GEC_VERSION } from './constants';
 import { BrowserDRM } from './browserDrm';
+import { isFirefox } from './browserDetection';
 
 // Browser-specific types (avoiding Node.js Buffer dependency)
 export type BrowserTTSChunk = {
@@ -38,12 +39,17 @@ class BrowserBuffer {
   static from(input: string | ArrayBuffer | Uint8Array, encoding?: string): Uint8Array {
     if (typeof input === 'string') {
       return new TextEncoder().encode(input);
-    } else if (input instanceof ArrayBuffer) {
-      return new Uint8Array(input);
     } else if (input instanceof Uint8Array) {
       return input;
+    } else if (input instanceof ArrayBuffer) {
+      return new Uint8Array(input);
+    } else if (input && typeof input === 'object' && 'byteLength' in input) {
+      // Handle cross-compartment ArrayBuffer in Firefox
+      // When ArrayBuffer comes from FileReader in Firefox, instanceof check may fail
+      return new Uint8Array(input as ArrayBuffer);
     }
-    throw new Error('Unsupported input type for BrowserBuffer.from');
+    console.error('BrowserBuffer.from received unexpected input type:', typeof input, input);
+    throw new Error(`Unsupported input type for BrowserBuffer.from: ${typeof input}`);
   }
 
   static concat(arrays: Uint8Array[]): Uint8Array {
@@ -204,10 +210,14 @@ export class BrowserCommunicate {
       throw new TypeError('text must be a string');
     }
 
+    // Use much larger chunk size for Firefox to avoid WebM concatenation issues
+    // Firefox can't handle multiple WebM streams concatenated together
+    const chunkSize = isFirefox() ? 32768 : 4096;
+
     this.texts = browserSplitTextByByteLength(
       escape(removeIncompatibleCharacters(text)),
       // browserCalcMaxMesgSize(this.ttsConfig.voice, this.ttsConfig.rate, this.ttsConfig.volume, this.ttsConfig.pitch),
-      4096,
+      chunkSize,
     );
 
     this.connectionTimeout = options.connectionTimeout;
@@ -292,46 +302,93 @@ export class BrowserCommunicate {
           if (headers['Path'] !== 'audio') {
             messageQueue.push(new UnexpectedResponse('Received binary message, but the path is not audio.'));
           } else {
-            const contentType = headers['Content-Type'];
-            if (contentType !== 'audio/mpeg') {
+            const contentType = headers['Content-Type'] || '';
+            // Accept both MP3 (Chrome) and WebM (Firefox) content types
+            // Content-Type may include codec parameter (e.g., "audio/webm; codec=opus")
+            const isValidAudio = contentType === 'audio/mpeg' ||
+                                 contentType.startsWith('audio/webm') ||
+                                 contentType === 'audio/webm';
+            if (!isValidAudio && contentType) {
+              // Only error if there's a Content-Type and it's not valid
               if (audioData.length > 0) {
-                messageQueue.push(new UnexpectedResponse('Received binary message, but with an unexpected Content-Type.'));
+                messageQueue.push(new UnexpectedResponse(`Received binary message with unexpected Content-Type: ${contentType}`));
               }
             } else if (audioData.length === 0) {
-              messageQueue.push(new UnexpectedResponse('Received binary message, but it is missing the audio data.'));
+              // Ignore empty audio chunks (normal at end of stream)
+              // Do nothing - this is expected behavior
             } else {
+              // Accept audio data even without Content-Type header (for compatibility)
               messageQueue.push({ type: 'audio', data: audioData });
             }
           }
         }
       } else if (data instanceof Blob) {
-        // Handle Blob data (convert to ArrayBuffer first)
-        data.arrayBuffer().then(arrayBuffer => {
-          const bufferData = BrowserBuffer.from(arrayBuffer);
-          if (bufferData.length < 2) {
-            messageQueue.push(new UnexpectedResponse('We received a binary message, but it is missing the header length.'));
-          } else {
-            const [headers, audioData] = browserGetHeadersAndDataFromBinary(bufferData);
+        // Handle Blob data using FileReader to avoid Firefox cross-compartment issues
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            const arrayBuffer = reader.result as ArrayBuffer;
 
-            if (headers['Path'] !== 'audio') {
-              messageQueue.push(new UnexpectedResponse('Received binary message, but the path is not audio.'));
+            // Firefox cross-compartment fix: manually copy bytes to avoid constructor issues
+            const byteLength = (arrayBuffer as any).byteLength;
+            const bufferData = new Uint8Array(byteLength);
+            const sourceView = new Uint8Array(arrayBuffer);
+            for (let i = 0; i < byteLength; i++) {
+              bufferData[i] = sourceView[i];
+            }
+
+            if (bufferData.length < 2) {
+              messageQueue.push(new UnexpectedResponse('We received a binary message, but it is missing the header length.'));
             } else {
-              const contentType = headers['Content-Type'];
-              if (contentType !== 'audio/mpeg') {
-                if (audioData.length > 0) {
-                  messageQueue.push(new UnexpectedResponse('Received binary message, but with an unexpected Content-Type.'));
-                }
-              } else if (audioData.length === 0) {
-                messageQueue.push(new UnexpectedResponse('Received binary message, but it is missing the audio data.'));
+              const [headers, audioData] = browserGetHeadersAndDataFromBinary(bufferData);
+
+              if (headers['Path'] !== 'audio') {
+                messageQueue.push(new UnexpectedResponse('Received binary message, but the path is not audio.'));
               } else {
-                messageQueue.push({ type: 'audio', data: audioData });
+                const contentType = headers['Content-Type'] || '';
+                // Accept both MP3 (Chrome) and WebM (Firefox) content types
+                // Content-Type may include codec parameter (e.g., "audio/webm; codec=opus")
+                const isValidAudio = contentType === 'audio/mpeg' ||
+                                     contentType.startsWith('audio/webm') ||
+                                     contentType === 'audio/webm';
+                if (!isValidAudio && contentType) {
+                  // Only error if there's a Content-Type and it's not valid
+                  if (audioData.length > 0) {
+                    messageQueue.push(new UnexpectedResponse(`Received binary message with unexpected Content-Type: ${contentType}`));
+                  }
+                } else if (audioData.length === 0) {
+                  // Ignore empty audio chunks (normal at end of stream)
+                  // Do nothing - this is expected behavior
+                } else {
+                  // Accept audio data even without Content-Type header (for compatibility)
+                  messageQueue.push({ type: 'audio', data: audioData });
+                }
               }
             }
+          } catch (error) {
+            console.error('Error processing Blob data:', error);
+            messageQueue.push(new UnexpectedResponse(`Failed to process Blob: ${error}`));
           }
-          if (resolveMessage) resolveMessage();
-        });
+          // Always resolve after processing blob
+          if (resolveMessage) {
+            resolveMessage();
+            resolveMessage = null; // Prevent double resolution
+          }
+        };
+        reader.onerror = () => {
+          console.error('FileReader error:', reader.error);
+          messageQueue.push(new UnexpectedResponse('Failed to read Blob data'));
+          if (resolveMessage) {
+            resolveMessage();
+            resolveMessage = null; // Prevent double resolution
+          }
+        };
+        reader.readAsArrayBuffer(data);
+        // Don't call resolveMessage here - let the FileReader callbacks handle it
+        return;
       }
 
+      // Only resolve for non-Blob messages
       if (resolveMessage) resolveMessage();
     };
 
@@ -373,13 +430,18 @@ export class BrowserCommunicate {
       }
     });
 
+    // Use WebM format for Firefox, MP3 for Chrome
+    const outputFormat = isFirefox()
+      ? 'webm-24khz-16bit-mono-opus'
+      : 'audio-24khz-48kbitrate-mono-mp3';
+
     websocket.send(
       `X-Timestamp:${dateToString()}\r\n`
       + 'Content-Type:application/json; charset=utf-8\r\n'
       + 'Path:speech.config\r\n\r\n'
       + '{"context":{"synthesis":{"audio":{"metadataoptions":{'
       + '"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"true"},'
-      + '"outputFormat":"audio-24khz-48kbitrate-mono-mp3"'
+      + `"outputFormat":"${outputFormat}"`
       + '}}}}\r\n'
     );
 

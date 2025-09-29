@@ -148,15 +148,21 @@ export async function initTTS(text: string): Promise<void> {
 
       mediaSource.addEventListener('sourceopen', () => {
         try {
-          // Use MP3 format instead of WebM for better browser compatibility
-          sourceBuffer = mediaSource.addSourceBuffer('audio/mpeg');
+          // Use WebM format for Firefox, MP3 for Chrome
+          const mimeType = isFirefox()
+            ? 'audio/webm; codecs="opus"'
+            : 'audio/mpeg';
+          sourceBuffer = mediaSource.addSourceBuffer(mimeType);
           sourceBuffer.addEventListener('updateend', appendNextChunk);
 
           // Start the chunked streaming process
           (async () => {
             try {
+              let streamEnded = false;
+
               for await (const chunk of communicate.stream()) {
                 if (!isActive) {
+                  streamEnded = true;
                   return; // Stop if this instance is no longer active
                 }
 
@@ -169,15 +175,23 @@ export async function initTTS(text: string): Promise<void> {
                 }
               }
 
+              streamEnded = true;
+
               // All chunks processed, end the stream
               const checkAndEndStream = () => {
                 if (!isActive) {
                   return; // Don't continue if this instance is no longer active
                 }
-                if (chunks.length === 0 && !sourceBuffer.updating) {
+
+                // Only end the stream when all chunks are processed AND appended
+                if (streamEnded && chunks.length === 0 && !sourceBuffer.updating) {
                   try {
-                    mediaSource.endOfStream();
-                    resolve(void 0);
+                    if (mediaSource.readyState === 'open') {
+                      mediaSource.endOfStream();
+                      resolve(void 0);
+                    } else {
+                      resolve(void 0);
+                    }
                   } catch (err) {
                     // MediaSource might already be closed
                     resolve(void 0);
