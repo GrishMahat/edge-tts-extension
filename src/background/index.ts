@@ -131,15 +131,15 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
 
   if (info.menuItemId === 'readAloud' && info.selectionText && tabId !== undefined) {
     if (hasOffscreenAPI()) {
+      // Show UI first (loading state)
+      await browser.tabs.sendMessage(tabId, {
+        action: 'showPlaybackUI',
+      }).catch(() => {});
       const settings = await getTTSSettings();
       await sendToAudioPlayer('readText', {
         text: info.selectionText,
         settings,
       }, tabId);
-      // Also notify content script to show UI
-      browser.tabs.sendMessage(tabId, {
-        action: 'showPlaybackUI',
-      }).catch(() => {});
     } else {
       browser.tabs.sendMessage(tabId, {
         action: 'readText',
@@ -157,14 +157,16 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
       
       if (pageContent && pageContent.trim()) {
         if (hasOffscreenAPI()) {
+          // Show UI first (loading state)
+          await browser.tabs.sendMessage(tabId, {
+            action: 'showPlaybackUI',
+          }).catch(() => {});
+          // Then start audio
           const settings = await getTTSSettings();
           await sendToAudioPlayer('readText', {
             text: pageContent,
             settings,
           }, tabId);
-          browser.tabs.sendMessage(tabId, {
-            action: 'showPlaybackUI',
-          }).catch(() => {});
         } else {
           browser.tabs.sendMessage(tabId, {
             action: 'readPage',
@@ -186,14 +188,15 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
         }) as { text?: string };
         
         if (response?.text) {
+          await browser.tabs.sendMessage(tabId, {
+            action: 'showPlaybackUI',
+          }).catch(() => {});
+          // Then start audio
           const settings = await getTTSSettings();
           await sendToAudioPlayer('readText', {
             text: response.text,
             settings,
           }, tabId);
-          browser.tabs.sendMessage(tabId, {
-            action: 'showPlaybackUI',
-          }).catch(() => {});
         }
       } catch (error) {
         console.error('Error extracting text from here:', error);
@@ -230,14 +233,16 @@ browser.commands.onCommand.addListener(async (command) => {
         const selectedText = results[0]?.result as string;
         if (selectedText && selectedText.trim()) {
           if (hasOffscreenAPI()) {
+            // Show UI first (loading state)
+            await browser.tabs.sendMessage(tabId, {
+              action: 'showPlaybackUI',
+            }).catch(() => {});
+            // Then start audio
             const settings = await getTTSSettings();
             await sendToAudioPlayer('readText', {
               text: selectedText,
               settings,
             }, tabId);
-            browser.tabs.sendMessage(tabId, {
-              action: 'showPlaybackUI',
-            }).catch(() => {});
           } else {
             browser.tabs.sendMessage(tabId, {
               action: 'readText',
@@ -263,14 +268,16 @@ browser.commands.onCommand.addListener(async (command) => {
         
         if (pageContent && pageContent.trim()) {
           if (hasOffscreenAPI()) {
+            // Show UI first (loading state)
+            await browser.tabs.sendMessage(tabId, {
+              action: 'showPlaybackUI',
+            }).catch(() => {});
+            // Then start audio
             const settings = await getTTSSettings();
             await sendToAudioPlayer('readText', {
               text: pageContent,
               settings,
             }, tabId);
-            browser.tabs.sendMessage(tabId, {
-              action: 'showPlaybackUI',
-            }).catch(() => {});
           } else {
             browser.tabs.sendMessage(tabId, {
               action: 'readPage',
@@ -300,14 +307,16 @@ browser.commands.onCommand.addListener(async (command) => {
             }) as { text?: string };
             
             if (response?.text) {
+              // Show UI first (loading state)
+              await browser.tabs.sendMessage(tabId, {
+                action: 'showPlaybackUI',
+              }).catch(() => {});
+              // Then start audio
               const settings = await getTTSSettings();
               await sendToAudioPlayer('readText', {
                 text: response.text,
                 settings,
               }, tabId);
-              browser.tabs.sendMessage(tabId, {
-                action: 'showPlaybackUI',
-              }).catch(() => {});
             }
           } else {
             browser.tabs.sendMessage(tabId, {
@@ -345,12 +354,13 @@ interface PlaybackStateMessage {
   error?: string;
 }
 
-// Listen for playback state updates from offscreen document
+// Listen for messages from content script and offscreen document
 browser.runtime.onMessage.addListener(function handleMessage(
   message: PlaybackStateMessage,
   sender,
   sendResponse
 ) {
+  // Handle playback state updates from offscreen document
   if (message.action === 'playbackState') {
     // Forward to active tab's content script for UI updates
     browser.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
@@ -363,5 +373,15 @@ browser.runtime.onMessage.addListener(function handleMessage(
         }).catch(() => {});
       }
     });
+  }
+  // Handle offscreen control messages from content script
+  else if (message.action === 'offscreen:togglePlayback' || message.action === 'offscreen:stopPlayback') {
+    if (hasOffscreenAPI()) {
+      // Forward to offscreen document
+      setupOffscreenDocument().then(() => {
+        // The message is also received by the offscreen document since it's a runtime.sendMessage
+        // We just need to make sure offscreen document is created
+      }).catch(console.error);
+    }
   }
 } as browser.Runtime.OnMessageListener);

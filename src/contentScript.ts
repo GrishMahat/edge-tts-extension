@@ -236,6 +236,11 @@ function updatePlayPauseButton() {
 }
 
 function togglePause() {
+  if (usingOffscreenAudio) {
+    browser.runtime.sendMessage({ action: 'offscreen:togglePlayback' }).catch(() => {});
+    return;
+  }
+  
   if (!audioElement) return;
 
   if (audioElement.paused) {
@@ -246,6 +251,14 @@ function togglePause() {
 }
 
 function stopPlayback() {
+  if (usingOffscreenAudio) {
+    // Send message to background to relay to offscreen
+    browser.runtime.sendMessage({ action: 'offscreen:stopPlayback' }).catch(() => {});
+    usingOffscreenAudio = false;
+    removeControlPanel();
+    return;
+  }
+  
   if (audioElement) {
     audioElement.pause();
     audioElement.currentTime = 0;
