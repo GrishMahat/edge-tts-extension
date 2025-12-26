@@ -16,13 +16,20 @@ const getManifestPath = () => {
 const isProduction = process.env.NODE_ENV === 'production';
 const shouldAnalyze = process.env.ANALYZE === 'true';
 
+const entry = {
+  popup: './src/popup/index.tsx',
+  background: './src/background/index.ts',
+  contentScript: './src/contentScript.ts',
+};
+
+// Add offscreen entry only for Chrome (Firefox doesn't support it)
+if (targetBrowser === 'chrome') {
+  entry.offscreen = './src/offscreen/index.ts';
+}
+
 module.exports = {
   mode: isProduction ? 'production' : 'development',
-  entry: {
-    popup: './src/popup/index.tsx',
-    background: './src/background/index.ts',
-    contentScript: './src/contentScript.ts',
-  },
+  entry,
   output: {
     path: path.resolve(__dirname, `dist/${targetBrowser}`),
     filename: '[name]/bundle.js', // Outputs files like dist/popup/bundle.js
@@ -48,6 +55,10 @@ module.exports = {
         { from: getManifestPath(), to: 'manifest.json' },
         { from: 'src/popup/index.html', to: 'popup/index.html' },
         { from: 'icons', to: 'icons' },
+        // Copy offscreen HTML only for Chrome
+        ...(targetBrowser === 'chrome' ? [
+          { from: 'src/offscreen/offscreen.html', to: 'offscreen/offscreen.html' },
+        ] : []),
       ],
     }),
     ...(shouldAnalyze ? [new BundleAnalyzerPlugin()] : []),

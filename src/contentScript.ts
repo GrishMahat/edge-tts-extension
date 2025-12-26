@@ -312,7 +312,12 @@ function removeControlPanel() {
 interface ExtensionMessage {
   action: string;
   text?: string;
+  state?: 'playing' | 'paused' | 'stopped' | 'loading' | 'error';
+  error?: string;
 }
+
+// Track if we're using offscreen audio mode
+let usingOffscreenAudio = false;
 
 // Message listener with type assertion to bypass strict type checking
 browser.runtime.onMessage.addListener(function handleMessage(
@@ -321,18 +326,29 @@ browser.runtime.onMessage.addListener(function handleMessage(
   sendResponse
 ) {
   if (request.action === "stopPlayback") {
-    stopPlayback();
+    if (usingOffscreenAudio) {
+      // Relay to background to forward to offscreen
+      browser.runtime.sendMessage({ action: 'offscreen:stopPlayback' }).catch(() => {});
+      removeControlPanel();
+    } else {
+      stopPlayback();
+    }
   }
   else if (request.action === "togglePlayback") {
-    togglePause();
+    if (usingOffscreenAudio) {
+      browser.runtime.sendMessage({ action: 'offscreen:togglePlayback' }).catch(() => {});
+    } else {
+      togglePause();
+    }
   }
   else if (request.action === "readText") {
+    // This is for fallback mode when offscreen is not available
     initTTS(request.text!).catch((error) => {
       console.error("TTS initialization error:", error);
     });
   }
   else if (request.action === 'readPage') {
-    // Extract the page content
+    // This is for fallback mode when offscreen is not available
     const pageContent = document.body.innerText;
 
     if (pageContent && pageContent.trim() !== '') {
@@ -344,11 +360,10 @@ browser.runtime.onMessage.addListener(function handleMessage(
     }
   }
   else if (request.action === 'readFromHere' && request.text) {
-    // Extract text from the current selection point to the end of the page
+    // This is for fallback mode when offscreen is not available
     try {
       let textToRead = extractTextFromSelection(request.text);
 
-      // Fallback to simple extraction if the advanced method fails
       if (!textToRead || textToRead.trim().length === 0) {
         textToRead = extractTextFromSelectionSimple(request.text);
       }
@@ -359,23 +374,118 @@ browser.runtime.onMessage.addListener(function handleMessage(
         });
       } else {
         console.warn('No text found from selection point.');
-        // Fallback to reading the selected text only
         initTTS(request.text).catch((error) => {
           console.error("TTS initialization error:", error);
         });
       }
     } catch (error) {
       console.error("Error extracting text from selection:", error);
-      // Fallback to reading the selected text only
       initTTS(request.text).catch((error) => {
         console.error("TTS initialization error:", error);
       });
     }
   }
+  // New handlers for offscreen audio mode
+  else if (request.action === 'showPlaybackUI') {
+    // Show the control panel when using offscreen audio
+    usingOffscreenAudio = true;
+    showOffscreenUI();
+  }
+  else if (request.action === 'updatePlaybackState') {
+    // Update UI based on playback state from offscreen
+    updateOffscreenPlaybackState(request.state, request.error);
+  }
+  else if (request.action === 'extractTextFromHere' && request.text) {
+    // Extract text from selection and return it
+    try {
+      let textToRead = extractTextFromSelection(request.text);
+
+      if (!textToRead || textToRead.trim().length === 0) {
+        textToRead = extractTextFromSelectionSimple(request.text);
+      }
+
+      if (!textToRead || textToRead.trim().length === 0) {
+        textToRead = request.text;
+      }
+
+      sendResponse({ text: textToRead });
+    } catch (error) {
+      console.error("Error extracting text:", error);
+      sendResponse({ text: request.text });
+    }
+    return true; // Keep message channel open for async response
+  }
 
   // Don't return true unless we need to send an async response
   // This prevents "message channel closed" errors
 } as browser.Runtime.OnMessageListener);
+
+/**
+ * Show UI for offscreen audio mode
+ */
+async function showOffscreenUI() {
+  // Clean up any existing local audio
+  cleanup();
+  
+  // Create control panel in loading state
+  controlPanel = await createControlPanel(true);
+}
+
+/**
+ * Update UI based on offscreen playback state
+ */
+function updateOffscreenPlaybackState(state?: string, error?: string) {
+  if (!controlPanel && state !== 'stopped') {
+    // Create panel if it doesn't exist
+    createControlPanel(state === 'loading').then((panel) => {
+      controlPanel = panel;
+      updateUIForState(state);
+    });
+    return;
+  }
+
+  updateUIForState(state);
+}
+
+function updateUIForState(state?: string) {
+  switch (state) {
+    case 'loading':
+      if (controlPanel) {
+        updatePanelContent(controlPanel, true);
+      }
+      break;
+    case 'playing':
+      isPlaying = true;
+      if (controlPanel) {
+        updatePanelContent(controlPanel, false);
+      }
+      updateOffscreenPlayPauseButton();
+      break;
+    case 'paused':
+      isPlaying = false;
+      updateOffscreenPlayPauseButton();
+      break;
+    case 'stopped':
+    case 'error':
+      isPlaying = false;
+      usingOffscreenAudio = false;
+      removeControlPanel();
+      break;
+  }
+}
+
+function updateOffscreenPlayPauseButton() {
+  const pauseButton = document.querySelector("#tts-pause");
+  if (pauseButton) {
+    const buttonText = isPlaying ? "Pause" : "Resume";
+    pauseButton.innerHTML = `
+      ${isPlaying ? circlePause : circlePlay}
+      <span>
+        ${buttonText}
+      </span>
+    `;
+  }
+}
 
 window.addEventListener('message', (event) => {
   if (event.source !== window) return;

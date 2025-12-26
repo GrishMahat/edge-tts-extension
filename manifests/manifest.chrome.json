@@ -18,7 +18,7 @@
     "https://speech.platform.bing.com/*",
     "wss://speech.platform.bing.com/*"
   ],
-  "permissions": ["contextMenus", "activeTab", "scripting", "storage"],
+  "permissions": ["contextMenus", "activeTab", "scripting", "storage", "offscreen"],
   "commands": {
     "read-selection": {
       "suggested_key": {
