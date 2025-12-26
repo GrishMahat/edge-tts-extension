@@ -5,6 +5,9 @@ import browser from 'webextension-polyfill';
 const OFFSCREEN_DOCUMENT_PATH = 'offscreen/offscreen.html';
 let creatingOffscreenDocument: Promise<void> | null = null;
 
+// Track the originating tab for playback state updates
+let originatingTabId: number | null = null;
+
 /**
  * Check if offscreen document exists (Chrome MV3 only)
  */
@@ -71,12 +74,18 @@ function hasOffscreenAPI(): boolean {
  * Send message to offscreen document or content script
  */
 async function sendToAudioPlayer(action: string, data?: any, tabId?: number): Promise<void> {
+  // Store the originating tab when starting playback
+  if (action === 'readText' && tabId !== undefined) {
+    originatingTabId = tabId;
+  }
+
   if (hasOffscreenAPI()) {
     // Use offscreen document
     await setupOffscreenDocument();
     await browser.runtime.sendMessage({
       action: `offscreen:${action}`,
       ...data,
+      originatingTabId: tabId,
     });
   } else if (tabId !== undefined) {
     // Fallback to content script
@@ -130,22 +139,13 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
   const tabId = tab?.id;
 
   if (info.menuItemId === 'readAloud' && info.selectionText && tabId !== undefined) {
-    if (hasOffscreenAPI()) {
-      // Show UI first (loading state)
-      await browser.tabs.sendMessage(tabId, {
-        action: 'showPlaybackUI',
-      }).catch(() => {});
-      const settings = await getTTSSettings();
-      await sendToAudioPlayer('readText', {
-        text: info.selectionText,
-        settings,
-      }, tabId);
-    } else {
-      browser.tabs.sendMessage(tabId, {
-        action: 'readText',
-        text: info.selectionText,
-      });
-    }
+    // Send directly to content script like the popup does - this is more reliable
+    browser.tabs.sendMessage(tabId, {
+      action: 'readText',
+      text: info.selectionText,
+    }).catch((error) => {
+      console.error('Error sending TTS message:', error);
+    });
   } else if (info.menuItemId === 'readPage' && tabId !== undefined) {
     // Get page content first
     try {
@@ -156,57 +156,25 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
       const pageContent = results[0]?.result as string;
       
       if (pageContent && pageContent.trim()) {
-        if (hasOffscreenAPI()) {
-          // Show UI first (loading state)
-          await browser.tabs.sendMessage(tabId, {
-            action: 'showPlaybackUI',
-          }).catch(() => {});
-          // Then start audio
-          const settings = await getTTSSettings();
-          await sendToAudioPlayer('readText', {
-            text: pageContent,
-            settings,
-          }, tabId);
-        } else {
-          browser.tabs.sendMessage(tabId, {
-            action: 'readPage',
-          });
-        }
+        // Send directly to content script like the popup does
+        browser.tabs.sendMessage(tabId, {
+          action: 'readText',
+          text: pageContent,
+        }).catch((error) => {
+          console.error('Error sending TTS message:', error);
+        });
       }
     } catch (error) {
       console.error('Error getting page content:', error);
     }
   } else if (info.menuItemId === 'readFromHere' && info.selectionText && tabId !== undefined) {
-    // For readFromHere, we need the content script to extract text from selection point
-    // Then relay that text to offscreen
-    if (hasOffscreenAPI()) {
-      // Request text extraction from content script
-      try {
-        const response = await browser.tabs.sendMessage(tabId, {
-          action: 'extractTextFromHere',
-          text: info.selectionText,
-        }) as { text?: string };
-        
-        if (response?.text) {
-          await browser.tabs.sendMessage(tabId, {
-            action: 'showPlaybackUI',
-          }).catch(() => {});
-          // Then start audio
-          const settings = await getTTSSettings();
-          await sendToAudioPlayer('readText', {
-            text: response.text,
-            settings,
-          }, tabId);
-        }
-      } catch (error) {
-        console.error('Error extracting text from here:', error);
-      }
-    } else {
-      browser.tabs.sendMessage(tabId, {
-        action: 'readFromHere',
-        text: info.selectionText,
-      });
-    }
+    // Send directly to content script which will extract text from selection point
+    browser.tabs.sendMessage(tabId, {
+      action: 'readFromHere',
+      text: info.selectionText,
+    }).catch((error) => {
+      console.error('Error sending TTS message:', error);
+    });
   }
 });
 
@@ -232,23 +200,13 @@ browser.commands.onCommand.addListener(async (command) => {
 
         const selectedText = results[0]?.result as string;
         if (selectedText && selectedText.trim()) {
-          if (hasOffscreenAPI()) {
-            // Show UI first (loading state)
-            await browser.tabs.sendMessage(tabId, {
-              action: 'showPlaybackUI',
-            }).catch(() => {});
-            // Then start audio
-            const settings = await getTTSSettings();
-            await sendToAudioPlayer('readText', {
-              text: selectedText,
-              settings,
-            }, tabId);
-          } else {
-            browser.tabs.sendMessage(tabId, {
-              action: 'readText',
-              text: selectedText,
-            });
-          }
+          // Send directly to content script like the popup does
+          browser.tabs.sendMessage(tabId, {
+            action: 'readText',
+            text: selectedText,
+          }).catch((error) => {
+            console.error('Error sending TTS message:', error);
+          });
         } else {
           console.warn('No text selected for read-selection command');
         }
@@ -267,22 +225,13 @@ browser.commands.onCommand.addListener(async (command) => {
         const pageContent = results[0]?.result as string;
         
         if (pageContent && pageContent.trim()) {
-          if (hasOffscreenAPI()) {
-            // Show UI first (loading state)
-            await browser.tabs.sendMessage(tabId, {
-              action: 'showPlaybackUI',
-            }).catch(() => {});
-            // Then start audio
-            const settings = await getTTSSettings();
-            await sendToAudioPlayer('readText', {
-              text: pageContent,
-              settings,
-            }, tabId);
-          } else {
-            browser.tabs.sendMessage(tabId, {
-              action: 'readPage',
-            });
-          }
+          // Send directly to content script like the popup does
+          browser.tabs.sendMessage(tabId, {
+            action: 'readText',
+            text: pageContent,
+          }).catch((error) => {
+            console.error('Error sending TTS message:', error);
+          });
         }
       } catch (error) {
         console.error('Error reading page:', error);
@@ -299,31 +248,13 @@ browser.commands.onCommand.addListener(async (command) => {
 
         const selectedText = results[0]?.result as string;
         if (selectedText && selectedText.trim()) {
-          if (hasOffscreenAPI()) {
-            // Request text extraction from content script
-            const response = await browser.tabs.sendMessage(tabId, {
-              action: 'extractTextFromHere',
-              text: selectedText,
-            }) as { text?: string };
-            
-            if (response?.text) {
-              // Show UI first (loading state)
-              await browser.tabs.sendMessage(tabId, {
-                action: 'showPlaybackUI',
-              }).catch(() => {});
-              // Then start audio
-              const settings = await getTTSSettings();
-              await sendToAudioPlayer('readText', {
-                text: response.text,
-                settings,
-              }, tabId);
-            }
-          } else {
-            browser.tabs.sendMessage(tabId, {
-              action: 'readFromHere',
-              text: selectedText,
-            });
-          }
+          // Send directly to content script which will extract text from selection point
+          browser.tabs.sendMessage(tabId, {
+            action: 'readFromHere',
+            text: selectedText,
+          }).catch((error) => {
+            console.error('Error sending TTS message:', error);
+          });
         } else {
           console.warn('No text selected for read-from-here command');
         }
@@ -362,17 +293,21 @@ browser.runtime.onMessage.addListener(function handleMessage(
 ) {
   // Handle playback state updates from offscreen document
   if (message.action === 'playbackState') {
-    // Forward to active tab's content script for UI updates
-    browser.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
-      const tabId = tabs[0]?.id;
-      if (tabId) {
-        browser.tabs.sendMessage(tabId, {
-          action: 'updatePlaybackState',
-          state: message.state,
-          error: message.error,
-        }).catch(() => {});
+    // Use originating tab from message or stored value
+    const targetTabId = (message as any).originatingTabId || originatingTabId;
+    
+    if (targetTabId) {
+      browser.tabs.sendMessage(targetTabId, {
+        action: 'updatePlaybackState',
+        state: message.state,
+        error: message.error,
+      }).catch(() => {});
+      
+      // Clear originating tab on stopped/error
+      if (message.state === 'stopped' || message.state === 'error') {
+        originatingTabId = null;
       }
-    });
+    }
   }
   // Handle offscreen control messages from content script
   else if (message.action === 'offscreen:togglePlayback' || message.action === 'offscreen:stopPlayback') {

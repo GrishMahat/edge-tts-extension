@@ -25,6 +25,10 @@ export function updatePanelContent(panel: HTMLElement, isLoading: boolean): void
 			<div class="etts-flex-center etts-loading-container">
 				<span>Generating audio...</span>
 				<div class="etts-loading-spinner"></div>
+				<button id="tts-cancel" class="etts-tts-button etts-red">
+					${circleStop}
+					<span>Cancel</span>
+				</button>
 			</div>
 		` : `
 			<div class="etts-flex-center">
@@ -40,7 +44,12 @@ export function updatePanelContent(panel: HTMLElement, isLoading: boolean): void
 		`}
 	`;
 
-	if (!isLoading) {
+	if (isLoading) {
+		const cancelButton = panel.querySelector('#tts-cancel');
+		if (cancelButton) cancelButton.addEventListener('click', () => {
+			(window as any).stopPlayback?.();
+		});
+	} else {
 		const pauseButton = panel.querySelector('#tts-pause');
 		const stopButton = panel.querySelector('#tts-stop');
 
@@ -53,3 +62,4 @@ export function updatePanelContent(panel: HTMLElement, isLoading: boolean): void
 		});
 	}
 }
+
