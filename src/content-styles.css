@@ -153,3 +153,35 @@
   justify-content: center;
   gap: 1rem;
 }
+
+.etts-error-container {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 4px;
+  max-width: 320px;
+}
+
+.etts-error-header {
+  color: #ef4444; /* Red-500 */
+  font-weight: 600;
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.etts-error-message {
+  font-size: 0.875rem;
+  line-height: 1.4;
+  opacity: 0.9;
+  color: var(--etts-text-secondary);
+}
+
+.etts-error-actions {
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}

@@ -19,7 +19,7 @@ export async function createControlPanel(isLoading = true): Promise<HTMLElement>
 	return panel;
 }
 
-export function updatePanelContent(panel: HTMLElement, isLoading: boolean): void {
+export function updatePanelContent(panel: HTMLElement, isLoading: boolean, error?: string): void {
 	panel.innerHTML = `
 		${isLoading ? `
 			<div class="etts-flex-center etts-loading-container">
@@ -29,6 +29,22 @@ export function updatePanelContent(panel: HTMLElement, isLoading: boolean): void
 					${circleStop}
 					<span>Cancel</span>
 				</button>
+			</div>
+		` : error ? `
+			<div class="etts-error-container">
+				<div class="etts-error-header">
+					<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+					<span>TTS Server Error</span>
+				</div>
+				<div class="etts-error-message">
+					Microsoft's free TTS service is currently experiencing instability. Please try again later.
+				</div>
+				<div class="etts-error-actions">
+					<button id="tts-close-error" class="etts-tts-button etts-red">
+						${circleStop}
+						<span>Close</span>
+					</button>
+				</div>
 			</div>
 		` : `
 			<div class="etts-flex-center">
@@ -47,6 +63,11 @@ export function updatePanelContent(panel: HTMLElement, isLoading: boolean): void
 	if (isLoading) {
 		const cancelButton = panel.querySelector('#tts-cancel');
 		if (cancelButton) cancelButton.addEventListener('click', () => {
+			(window as any).stopPlayback?.();
+		});
+	} else if (error) {
+		const closeButton = panel.querySelector('#tts-close-error');
+		if (closeButton) closeButton.addEventListener('click', () => {
 			(window as any).stopPlayback?.();
 		});
 	} else {

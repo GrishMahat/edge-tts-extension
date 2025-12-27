@@ -41,7 +41,11 @@ const player = new TTSPlayer({
       return; // Don't remove panel yet - let the fallback handle it
     }
     console.error('TTS playback error:', error);
-    removeControlPanel();
+    if (controlPanel) {
+      updatePanelContent(controlPanel, false, error || "Unknown playback error");
+    } else {
+      removeControlPanel();
+    }
   },
 });
 
@@ -119,8 +123,13 @@ export async function initTTS(text: string, useOffscreen = false): Promise<void>
       return;
     }
     
-    removeControlPanel();
-    throw error;
+    // removeControlPanel();
+    // throw error;
+    if (controlPanel) {
+      updatePanelContent(controlPanel, false, String(errorMsg));
+    } else {
+      removeControlPanel();
+    }
   }
 }
 
@@ -249,14 +258,14 @@ browser.runtime.onMessage.addListener(function handleMessage(
   }
   else if (request.action === "readText") {
     initTTS(request.text!).catch((error) => {
-      console.error("TTS initialization error:", error);
+      // console.error("TTS initialization error:", error);
     });
   }
   else if (request.action === 'readPage') {
     const pageContent = document.body.innerText;
     if (pageContent && pageContent.trim() !== '') {
       initTTS(pageContent).catch((error) => {
-        console.error("TTS initialization error:", error);
+        // console.error("TTS initialization error:", error);
       });
     } else {
       console.warn('The page content is empty.');
@@ -270,18 +279,18 @@ browser.runtime.onMessage.addListener(function handleMessage(
       }
       if (textToRead && textToRead.trim() !== '') {
         initTTS(textToRead).catch((error) => {
-          console.error("TTS initialization error:", error);
+          // console.error("TTS initialization error:", error);
         });
       } else {
         console.warn('No text found from selection point.');
         initTTS(request.text).catch((error) => {
-          console.error("TTS initialization error:", error);
+          // console.error("TTS initialization error:", error);
         });
       }
     } catch (error) {
       console.error("Error extracting text from selection:", error);
       initTTS(request.text).catch((error) => {
-        console.error("TTS initialization error:", error);
+        // console.error("TTS initialization error:", error);
       });
     }
   }
@@ -346,10 +355,18 @@ function updateUIForState(state?: string) {
       updatePlayPauseButton();
       break;
     case 'stopped':
-    case 'error':
       isPlaying = false;
       usingOffscreenAudio = false;
       removeControlPanel();
+      break;
+    case 'error':
+      isPlaying = false;
+      usingOffscreenAudio = false;
+      if (controlPanel) {
+        updatePanelContent(controlPanel, false, 'Offscreen playback error');
+      } else {
+        removeControlPanel();
+      }
       break;
   }
 }
