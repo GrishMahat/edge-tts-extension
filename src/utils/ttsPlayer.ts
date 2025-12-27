@@ -106,7 +106,12 @@ export class TTSPlayer {
                          this.audioElement?.error?.code === 3 ? 'MEDIA_ERR_DECODE' :
                          this.audioElement?.error?.code === 4 ? 'MEDIA_ERR_SRC_NOT_SUPPORTED' : 'UNKNOWN',
             };
-            console.error('Audio playback error:', errorDetails);
+            // Only log as error if NOT a CSP issue (code 4 with URL safety message)
+            const isCSPError = errorDetails.errorCode === 4 && 
+              (errorDetails.errorMessage?.includes('URL safety') || errorDetails.errorMessage?.includes('CSP'));
+            if (!isCSPError) {
+              console.error('Audio playback error:', errorDetails);
+            }
             this.callbacks.onError?.(this.audioElement?.error?.message || 'Audio playback error');
             this.cleanup();
           };

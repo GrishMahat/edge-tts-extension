@@ -71,10 +71,11 @@ browser.runtime.onMessage.addListener(function handleMessage(
   sender,
   sendResponse
 ) {
-  console.log('Offscreen received message:', message.action);
+  console.log('Offscreen received message:', message.action, message);
 
   switch (message.action) {
     case 'offscreen:readText':
+      console.log('Offscreen: handling readText, text length:', message.text?.length);
       if (message.text) {
         originatingTabId = message.originatingTabId || null;
         sendPlaybackState('loading'); // Immediately send loading state

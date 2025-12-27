@@ -34,18 +34,49 @@ const player = new TTSPlayer({
     removeControlPanel();
   },
   onError: (error) => {
+    // Check if this is a CSP error - if so, try offscreen fallback silently
+    if (error && (error.includes('URL safety check') || error.includes('CSP') || error.includes('Content Security Policy') || error.includes('MEDIA_ERR_SRC_NOT_SUPPORTED'))) {
+      // Don't log as error - this is expected on CSP-restricted sites, fallback will handle it
+      console.debug('Detected CSP restriction, falling back to offscreen audio');
+      // Trigger fallback asynchronously - use the pending text/settings stored in initTTS
+      handleCSPFallback();
+      return; // Don't remove panel yet - let the fallback handle it
+    }
     console.error('TTS playback error:', error);
     removeControlPanel();
   },
 });
 
+// Track pending fallback text for CSP retry
+let pendingFallbackText: string | null = null;
+let pendingFallbackSettings: any = null;
+
+// Function to handle CSP fallback from error callback
+function handleCSPFallback(): void {
+  if (pendingFallbackText) {
+    console.debug('Initiating offscreen fallback for CSP-restricted site');
+    initTTSViaOffscreen(pendingFallbackText, pendingFallbackSettings || {})
+      .catch((err) => {
+        console.error('Offscreen fallback failed:', err);
+        removeControlPanel();
+      });
+    pendingFallbackText = null;
+    pendingFallbackSettings = null;
+  } else {
+    console.warn('No pending text for CSP fallback');
+    removeControlPanel();
+  }
+}
+
 // Make these functions available to the control panel
 (window as any).togglePause = togglePause;
 (window as any).stopPlayback = stopPlayback;
 
-export async function initTTS(text: string): Promise<void> {
+export async function initTTS(text: string, useOffscreen = false): Promise<void> {
   player.cleanup();
   removeControlPanel();
+  pendingFallbackText = null;
+  pendingFallbackSettings = null;
 
   try {
     const settings = await browser.storage.sync.get({
@@ -53,6 +84,16 @@ export async function initTTS(text: string): Promise<void> {
       customVoice: "",
       speed: 1.2,
     });
+
+    // If CSP issues detected or forced offscreen, use offscreen document
+    if (useOffscreen) {
+      await initTTSViaOffscreen(text, settings);
+      return;
+    }
+
+    // Store settings for potential fallback
+    pendingFallbackText = text;
+    pendingFallbackSettings = settings;
 
     // Create control panel in loading state
     controlPanel = await createControlPanel(true);
@@ -71,10 +112,67 @@ export async function initTTS(text: string): Promise<void> {
       customVoice: settings.customVoice as string,
       speed: settings.speed as number,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error("TTS Error:", error);
+    
+    // Check if this is a CSP-related error
+    const errorMsg = error?.message || String(error);
+    if (errorMsg.includes('URL safety check') || errorMsg.includes('CSP') || errorMsg.includes('Content Security Policy') || errorMsg.includes('MEDIA_ERR_SRC_NOT_SUPPORTED')) {
+      console.log('CSP error detected in initTTS, falling back to offscreen audio');
+      await tryOffscreenFallback();
+      return;
+    }
+    
     removeControlPanel();
     throw error;
+  }
+}
+
+/**
+ * Fallback to offscreen document for CSP-blocked pages
+ */
+async function tryOffscreenFallback(): Promise<void> {
+  if (!pendingFallbackText) {
+    console.error('No pending text for offscreen fallback');
+    removeControlPanel();
+    return;
+  }
+
+  console.log('Attempting offscreen fallback for CSP-blocked audio');
+  await initTTSViaOffscreen(pendingFallbackText, pendingFallbackSettings || {});
+  pendingFallbackText = null;
+  pendingFallbackSettings = null;
+}
+
+/**
+ * Play TTS via offscreen document (bypasses page CSP)
+ */
+async function initTTSViaOffscreen(text: string, settings: any): Promise<void> {
+  console.log('Content: initTTSViaOffscreen called, text length:', text?.length);
+  usingOffscreenAudio = true;
+  
+  // Show loading UI immediately
+  if (!controlPanel) {
+    controlPanel = await createControlPanel(true);
+  }
+
+  // Request offscreen playback through background script
+  try {
+    console.log('Content: sending requestOffscreenPlayback to background');
+    const response = await browser.runtime.sendMessage({
+      action: 'requestOffscreenPlayback',
+      text,
+      settings: {
+        voiceName: settings.voiceName || 'en-US-ChristopherNeural',
+        customVoice: settings.customVoice || '',
+        speed: settings.speed || 1.2,
+      },
+    });
+    console.log('Content: requestOffscreenPlayback response:', response);
+  } catch (error) {
+    console.error('Content: Failed to request offscreen playback:', error);
+    removeControlPanel();
+    usingOffscreenAudio = false;
   }
 }
 
@@ -136,6 +234,12 @@ browser.runtime.onMessage.addListener(function handleMessage(
   sender,
   sendResponse
 ) {
+  // Handle ping to check if content script is loaded
+  if (request.action === "ping") {
+    sendResponse({ pong: true });
+    return true;
+  }
+  
   if (request.action === "stopPlayback") {
     if (usingOffscreenAudio) {
       browser.runtime.sendMessage({ action: 'offscreen:stopPlayback' }).catch(() => {});

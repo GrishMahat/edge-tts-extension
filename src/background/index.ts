@@ -107,6 +107,74 @@ async function getTTSSettings() {
   });
 }
 
+/**
+ * Ensure content script is loaded in the tab, inject if needed
+ */
+async function ensureContentScriptLoaded(tabId: number): Promise<boolean> {
+  try {
+    // Try to ping the content script
+    await browser.tabs.sendMessage(tabId, { action: 'ping' });
+    return true;
+  } catch (error) {
+    // Content script not loaded, try to inject it
+    console.log('Content script not found, attempting to inject...');
+    try {
+      await browser.scripting.executeScript({
+        target: { tabId },
+        files: ['contentScript/bundle.js'],
+      });
+      await browser.scripting.insertCSS({
+        target: { tabId },
+        files: ['contentScript/bundle.css'],
+      });
+      // Wait a bit for the script to initialize
+      await new Promise(resolve => setTimeout(resolve, 100));
+      return true;
+    } catch (injectError) {
+      console.error('Failed to inject content script:', injectError);
+      return false;
+    }
+  }
+}
+
+/**
+ * Send message to tab with content script injection fallback
+ */
+async function sendMessageToTab(tabId: number, message: any): Promise<void> {
+  try {
+    await browser.tabs.sendMessage(tabId, message);
+  } catch (error: any) {
+    // Check if it's a "receiving end does not exist" error
+    if (error?.message?.includes('Could not establish connection') || 
+        error?.message?.includes('Receiving end does not exist')) {
+      console.log('Content script not available, attempting injection...');
+      const loaded = await ensureContentScriptLoaded(tabId);
+      if (loaded) {
+        // Retry the message
+        await browser.tabs.sendMessage(tabId, message);
+      } else {
+        // If we can't inject, try using offscreen document for TTS
+        if (message.action === 'readText' && hasOffscreenAPI()) {
+          console.log('Falling back to offscreen TTS playback');
+          originatingTabId = tabId;
+          await setupOffscreenDocument();
+          const settings = await getTTSSettings();
+          await browser.runtime.sendMessage({
+            action: 'offscreen:readText',
+            text: message.text,
+            settings,
+            originatingTabId: tabId,
+          });
+        } else {
+          throw new Error('Cannot inject content script on this page');
+        }
+      }
+    } else {
+      throw error;
+    }
+  }
+}
+
 browser.runtime.onInstalled.addListener(() => {
   // Add context menu for reading selected text
   browser.contextMenus.create({
@@ -139,8 +207,8 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
   const tabId = tab?.id;
 
   if (info.menuItemId === 'readAloud' && info.selectionText && tabId !== undefined) {
-    // Send directly to content script like the popup does - this is more reliable
-    browser.tabs.sendMessage(tabId, {
+    // Send to content script with fallback to injection
+    sendMessageToTab(tabId, {
       action: 'readText',
       text: info.selectionText,
     }).catch((error) => {
@@ -156,8 +224,8 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
       const pageContent = results[0]?.result as string;
       
       if (pageContent && pageContent.trim()) {
-        // Send directly to content script like the popup does
-        browser.tabs.sendMessage(tabId, {
+        // Send to content script with fallback
+        sendMessageToTab(tabId, {
           action: 'readText',
           text: pageContent,
         }).catch((error) => {
@@ -168,8 +236,8 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
       console.error('Error getting page content:', error);
     }
   } else if (info.menuItemId === 'readFromHere' && info.selectionText && tabId !== undefined) {
-    // Send directly to content script which will extract text from selection point
-    browser.tabs.sendMessage(tabId, {
+    // Send to content script with fallback
+    sendMessageToTab(tabId, {
       action: 'readFromHere',
       text: info.selectionText,
     }).catch((error) => {
@@ -200,8 +268,8 @@ browser.commands.onCommand.addListener(async (command) => {
 
         const selectedText = results[0]?.result as string;
         if (selectedText && selectedText.trim()) {
-          // Send directly to content script like the popup does
-          browser.tabs.sendMessage(tabId, {
+          // Send to content script with fallback
+          sendMessageToTab(tabId, {
             action: 'readText',
             text: selectedText,
           }).catch((error) => {
@@ -225,8 +293,8 @@ browser.commands.onCommand.addListener(async (command) => {
         const pageContent = results[0]?.result as string;
         
         if (pageContent && pageContent.trim()) {
-          // Send directly to content script like the popup does
-          browser.tabs.sendMessage(tabId, {
+          // Send to content script with fallback
+          sendMessageToTab(tabId, {
             action: 'readText',
             text: pageContent,
           }).catch((error) => {
@@ -248,8 +316,8 @@ browser.commands.onCommand.addListener(async (command) => {
 
         const selectedText = results[0]?.result as string;
         if (selectedText && selectedText.trim()) {
-          // Send directly to content script which will extract text from selection point
-          browser.tabs.sendMessage(tabId, {
+          // Send to content script with fallback
+          sendMessageToTab(tabId, {
             action: 'readFromHere',
             text: selectedText,
           }).catch((error) => {
@@ -317,6 +385,56 @@ browser.runtime.onMessage.addListener(function handleMessage(
         // The message is also received by the offscreen document since it's a runtime.sendMessage
         // We just need to make sure offscreen document is created
       }).catch(console.error);
+    }
+  }
+  // Handle playback request from content script (CSP fallback)
+  else if (message.action === 'requestOffscreenPlayback') {
+    console.log('Background: received requestOffscreenPlayback', message);
+    const tabId = sender.tab?.id;
+    if (tabId !== undefined && hasOffscreenAPI()) {
+      console.log('Background: setting up offscreen playback for tab', tabId);
+      originatingTabId = tabId;
+      
+      // First show loading UI in content script
+      browser.tabs.sendMessage(tabId, {
+        action: 'showPlaybackUI',
+      }).catch(() => {});
+      
+      // Then route to offscreen document
+      setupOffscreenDocument().then(() => {
+        console.log('Background: offscreen document ready, sending readText');
+        const msg = message as any;
+        browser.runtime.sendMessage({
+          action: 'offscreen:readText',
+          text: msg.text,
+          settings: msg.settings,
+          originatingTabId: tabId,
+        }).catch((error: Error) => {
+          console.error('Failed to send to offscreen:', error);
+          browser.tabs.sendMessage(tabId, {
+            action: 'updatePlaybackState',
+            state: 'error',
+            error: 'Failed to initialize audio playback',
+          }).catch(() => {});
+        });
+      }).catch((error: Error) => {
+        console.error('Failed to setup offscreen document:', error);
+        browser.tabs.sendMessage(tabId, {
+          action: 'updatePlaybackState',
+          state: 'error',
+          error: 'Failed to initialize audio playback',
+        }).catch(() => {});
+      });
+    } else if (!hasOffscreenAPI()) {
+      // No offscreen API available - send error back
+      const tabId = sender.tab?.id;
+      if (tabId) {
+        browser.tabs.sendMessage(tabId, {
+          action: 'updatePlaybackState',
+          state: 'error',
+          error: 'Offscreen audio not available on this browser',
+        }).catch(() => {});
+      }
     }
   }
 } as browser.Runtime.OnMessageListener);
