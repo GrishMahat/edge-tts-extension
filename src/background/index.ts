@@ -34,7 +34,6 @@ async function hasOffscreenDocument(): Promise<boolean> {
 async function setupOffscreenDocument(): Promise<void> {
   // Only works in Chrome with offscreen API
   if (typeof chrome === 'undefined' || !chrome.offscreen) {
-    console.log('Offscreen API not available, using content script audio');
     return;
   }
 
@@ -55,7 +54,6 @@ async function setupOffscreenDocument(): Promise<void> {
 
   try {
     await creatingOffscreenDocument;
-    console.log('Offscreen document created');
   } catch (error) {
     console.error('Failed to create offscreen document:', error);
   } finally {
@@ -117,7 +115,6 @@ async function ensureContentScriptLoaded(tabId: number): Promise<boolean> {
     return true;
   } catch (error) {
     // Content script not loaded, try to inject it
-    console.log('Content script not found, attempting to inject...');
     try {
       await browser.scripting.executeScript({
         target: { tabId },
@@ -143,7 +140,6 @@ async function sendMessageToTab(tabId: number, message: any): Promise<void> {
     // Check if it's a "receiving end does not exist" error
     if (error?.message?.includes('Could not establish connection') || 
         error?.message?.includes('Receiving end does not exist')) {
-      console.log('Content script not available, attempting injection...');
       const loaded = await ensureContentScriptLoaded(tabId);
       if (loaded) {
         // Retry the message
@@ -151,7 +147,7 @@ async function sendMessageToTab(tabId: number, message: any): Promise<void> {
       } else {
         // If we can't inject, try using offscreen document for TTS
         if (message.action === 'readText' && hasOffscreenAPI()) {
-          console.log('Falling back to offscreen TTS playback');
+
           originatingTabId = tabId;
           await setupOffscreenDocument();
           const settings = await getTTSSettings();
@@ -385,10 +381,8 @@ browser.runtime.onMessage.addListener(function handleMessage(
   }
   // Handle playback request from content script (CSP fallback)
   else if (message.action === 'requestOffscreenPlayback') {
-    console.log('Background: received requestOffscreenPlayback', message);
     const tabId = sender.tab?.id;
     if (tabId !== undefined && hasOffscreenAPI()) {
-      console.log('Background: setting up offscreen playback for tab', tabId);
       originatingTabId = tabId;
       
       // First show loading UI in content script
@@ -398,7 +392,7 @@ browser.runtime.onMessage.addListener(function handleMessage(
       
       // Then route to offscreen document
       setupOffscreenDocument().then(() => {
-        console.log('Background: offscreen document ready, sending readText');
+
         const msg = message as any;
         browser.runtime.sendMessage({
           action: 'offscreen:readText',
