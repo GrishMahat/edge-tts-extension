@@ -210,6 +210,7 @@ export class TTSPlayer {
                 checkAndEndStream();
               } catch (error) {
                 console.error('TTS streaming error:', error);
+                this.cleanup();
                 this.callbacks.onError?.((error as Error).message || 'TTS streaming error');
                 reject(error);
               }
