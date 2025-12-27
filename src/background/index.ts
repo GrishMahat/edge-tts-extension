@@ -56,6 +56,7 @@ async function setupOffscreenDocument(): Promise<void> {
     await creatingOffscreenDocument;
   } catch (error) {
     console.error('Failed to create offscreen document:', error);
+    throw error;
   } finally {
     creatingOffscreenDocument = null;
   }
@@ -77,20 +78,42 @@ async function sendToAudioPlayer(action: string, data?: any, tabId?: number): Pr
     originatingTabId = tabId;
   }
 
-  if (hasOffscreenAPI()) {
-    // Use offscreen document
-    await setupOffscreenDocument();
-    await browser.runtime.sendMessage({
-      action: `offscreen:${action}`,
-      ...data,
-      originatingTabId: tabId,
-    });
-  } else if (tabId !== undefined) {
-    // Fallback to content script
-    await browser.tabs.sendMessage(tabId, {
-      action,
-      ...data,
-    });
+  try {
+    if (hasOffscreenAPI()) {
+      // Use offscreen document
+      await setupOffscreenDocument();
+      
+      // Add a small delay/retry mechanism could be here if race conditions persist,
+      // but await setupOffscreenDocument should be sufficient for the document to exist.
+      // If the JS inside offscreen hasn't initialized listeners yet, sendMessage might still fail or go nowhere.
+      // However, usually script execution is fast.
+      
+      await browser.runtime.sendMessage({
+        action: `offscreen:${action}`,
+        ...data,
+        originatingTabId: tabId,
+      });
+    } else if (tabId !== undefined) {
+      // Fallback to content script
+      await browser.tabs.sendMessage(tabId, {
+        action,
+        ...data,
+      });
+    }
+  } catch (error: any) {
+    console.error('Failed to send to audio player:', error);
+    
+    // Attempt to notify user if we have a tab context
+    const targetTabId = tabId || originatingTabId;
+    if (targetTabId) {
+      browser.tabs.sendMessage(targetTabId, {
+        action: 'updatePlaybackState',
+        state: 'error',
+        error: error.message || 'Failed to initialize audio playback'
+      }).catch(() => {
+        // Ignore errors sending error to tab (e.g. tab closed)
+      });
+    }
   }
 }
 
@@ -369,14 +392,29 @@ browser.runtime.onMessage.addListener(function handleMessage(
       }
     }
   }
-  // Handle offscreen control messages from content script
   else if (message.action === 'offscreen:togglePlayback' || message.action === 'offscreen:stopPlayback') {
     if (hasOffscreenAPI()) {
-      // Forward to offscreen document
-      setupOffscreenDocument().then(() => {
-        // The message is also received by the offscreen document since it's a runtime.sendMessage
-        // We just need to make sure offscreen document is created
-      }).catch(console.error);
+      // Check if offscreen exists first
+      hasOffscreenDocument().then(async (exists) => {
+        if (exists) {
+          // If it exists, the original runtime.sendMessage likely reached it (or will).
+          // But to be safe vs lifecycle races, we could ensure it's kept alive?
+          // For now, assume message delivery works if target exists.
+        } else {
+          // If it doesn't exist, the original message was definitely missed by the offscreen context.
+          // We need to create it and then RESEND the message.
+          try {
+            await setupOffscreenDocument();
+            await browser.runtime.sendMessage({
+              ...message,
+              // Ensure we preserve the originating tab if present in the message
+              originatingTabId: (message as any).originatingTabId
+            });
+          } catch (error) {
+            console.error('Failed to restore offscreen for toggle:', error);
+          }
+        }
+      });
     }
   }
   // Handle playback request from content script (CSP fallback)

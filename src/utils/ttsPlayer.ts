@@ -28,6 +28,10 @@ export class TTSPlayer {
   private isPlaying = false;
   private currentTTSDeactivate: (() => void) | null = null;
   private callbacks: TTSPlayerCallbacks;
+  
+  // Track media resources for cleanup
+  private mediaSource: MediaSource | null = null;
+  private sourceBuffer: SourceBuffer | null = null;
 
   constructor(callbacks: TTSPlayerCallbacks = {}) {
     this.callbacks = callbacks;
@@ -64,6 +68,8 @@ export class TTSPlayer {
 
       return new Promise((resolve, reject) => {
         const mediaSource = new MediaSource();
+        this.mediaSource = mediaSource;
+        
         let sourceBuffer: SourceBuffer;
         const chunks: Uint8Array[] = [];
         let isFirstChunk = true;
@@ -161,6 +167,8 @@ export class TTSPlayer {
               ? 'audio/webm; codecs="opus"'
               : 'audio/mpeg';
             sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+            this.sourceBuffer = sourceBuffer;
+            
             sourceBuffer.addEventListener('updateend', appendNextChunk);
 
             (async () => {
@@ -202,6 +210,7 @@ export class TTSPlayer {
                 checkAndEndStream();
               } catch (error) {
                 console.error('TTS streaming error:', error);
+                this.cleanup();
                 this.callbacks.onError?.((error as Error).message || 'TTS streaming error');
                 reject(error);
               }
@@ -249,6 +258,24 @@ export class TTSPlayer {
     if (this.currentTTSDeactivate) {
       this.currentTTSDeactivate();
       this.currentTTSDeactivate = null;
+    }
+
+    if (this.sourceBuffer) {
+      try {
+        if (this.sourceBuffer.updating) {
+          this.sourceBuffer.abort();
+        }
+      } catch (e) {
+        // Ignore errors if sourceBuffer is already removed or closed
+      }
+      this.sourceBuffer = null;
+    }
+
+    // Clean up MediaSource
+    if (this.mediaSource) {
+      // No strict need to call endOfStream() as revoking URL does the job,
+      // but detaching reference is important.
+      this.mediaSource = null;
     }
 
     if (this.audioElement) {

@@ -245,19 +245,80 @@ export class BrowserCommunicate {
     throw new UnexpectedResponse('No WordBoundary metadata found');
   }
 
+  /*
+   * Helper to establish WebSocket connection with retry logic.
+   * 
+   * WHY WE NEED RETRY LOGIC:
+   * Microsoft's Edge TTS server is sometimes unstable or "flaky", failing to accept 
+   * the connection on the first attempt (returning 400s or immediate disconnects).
+   * 
+   * We've observed that simply retrying the connection a few times often succeeds.
+   * Therefore, we attempt up to 3 times with exponential backoff before giving up
+   * and showing an error to the user. This makes the playback much more reliable.
+   */
+  private async connectWebSocket(url: string): Promise<WebSocket> {
+    const maxRetries = 3;
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await new Promise<WebSocket>((resolve, reject) => {
+          const ws = new WebSocket(url);
+          let isResolved = false;
+
+          const timeoutId = this.connectionTimeout ? setTimeout(() => {
+            if (!isResolved) {
+              isResolved = true;
+              ws.close();
+              reject(new WebSocketError('Connection timeout'));
+            }
+          }, this.connectionTimeout) : null;
+
+          ws.onopen = () => {
+            if (!isResolved) {
+              isResolved = true;
+              if (timeoutId) clearTimeout(timeoutId);
+              resolve(ws);
+            }
+          };
+
+          ws.onerror = (error) => {
+            if (!isResolved) {
+              isResolved = true;
+              if (timeoutId) clearTimeout(timeoutId);
+              reject(new WebSocketError('WebSocket connection failed'));
+            }
+          };
+        });
+      } catch (error) {
+        lastError = error as Error;
+        if (attempt < maxRetries) {
+          const delay = Math.pow(2, attempt - 1) * 1000;
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+
+    throw new WebSocketError(
+      'Failed to connect to TTS service after multiple attempts. The Microsoft Server Speech Text to Speech Voice is currently unavailable. Please try again later.'
+    );
+  }
+
   private async * _stream(): AsyncGenerator<BrowserTTSChunk, void, unknown> {
     const url = `${WSS_URL}&Sec-MS-GEC=${await BrowserDRM.generateSecMsGec()}&Sec-MS-GEC-Version=${SEC_MS_GEC_VERSION}&ConnectionId=${connectId()}`;
 
-    const websocket = new WebSocket(url);
+    // Establish connection with retry logic
+    const websocket = await this.connectWebSocket(url);
+    
     const messageQueue: (BrowserTTSChunk | Error | 'close')[] = [];
     let resolveMessage: (() => void) | null = null;
 
-    // Set connection timeout if specified
+    // Set timeout for first message if specified
     let timeoutId: number | undefined;
     if (this.connectionTimeout) {
       timeoutId = window.setTimeout(() => {
         websocket.close();
-        messageQueue.push(new WebSocketError('Connection timeout'));
+        messageQueue.push(new WebSocketError('Connection timeout (no data received)'));
         if (resolveMessage) resolveMessage();
       }, this.connectionTimeout);
     }
@@ -409,44 +470,6 @@ export class BrowserCommunicate {
       messageQueue.push('close');
       if (resolveMessage) resolveMessage();
     };
-
-    await new Promise<void>((resolve, reject) => {
-      // Track if connection attempt has been resolved
-      let resolved = false;
-      
-      websocket.onopen = () => {
-        if (resolved) return;
-        resolved = true;
-        if (timeoutId) {
-          window.clearTimeout(timeoutId);
-          timeoutId = undefined;
-        }
-        resolve();
-      };
-      
-      // Handle connection failure
-      const originalOnError = websocket.onerror;
-      websocket.onerror = (error: Event) => {
-        if (resolved) {
-          // Connection was already established, let the outer onerror handle it
-          if (originalOnError) originalOnError.call(websocket, error);
-          return;
-        }
-        resolved = true;
-        reject(new WebSocketError('Failed to connect to TTS service. Please try again.'));
-      };
-
-      // Set up a timeout for connection establishment
-      if (this.connectionTimeout) {
-        setTimeout(() => {
-          if (!resolved && websocket.readyState === WebSocket.CONNECTING) {
-            resolved = true;
-            websocket.close();
-            reject(new WebSocketError('Connection timeout'));
-          }
-        }, this.connectionTimeout);
-      }
-    });
 
     // Use WebM format for Firefox, MP3 for Chrome
     const outputFormat = isFirefox()
