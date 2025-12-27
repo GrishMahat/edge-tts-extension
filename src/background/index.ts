@@ -123,10 +123,6 @@ async function ensureContentScriptLoaded(tabId: number): Promise<boolean> {
         target: { tabId },
         files: ['contentScript/bundle.js'],
       });
-      await browser.scripting.insertCSS({
-        target: { tabId },
-        files: ['contentScript/bundle.css'],
-      });
       // Wait a bit for the script to initialize
       await new Promise(resolve => setTimeout(resolve, 100));
       return true;

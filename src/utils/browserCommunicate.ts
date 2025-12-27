@@ -397,7 +397,7 @@ export class BrowserCommunicate {
         window.clearTimeout(timeoutId);
         timeoutId = undefined;
       }
-      messageQueue.push(new WebSocketError('WebSocket error occurred'));
+      messageQueue.push(new WebSocketError('WebSocket connection failed. The TTS service may be temporarily unavailable.'));
       if (resolveMessage) resolveMessage();
     };
 
@@ -411,18 +411,36 @@ export class BrowserCommunicate {
     };
 
     await new Promise<void>((resolve, reject) => {
+      // Track if connection attempt has been resolved
+      let resolved = false;
+      
       websocket.onopen = () => {
+        if (resolved) return;
+        resolved = true;
         if (timeoutId) {
           window.clearTimeout(timeoutId);
           timeoutId = undefined;
         }
         resolve();
       };
+      
+      // Handle connection failure
+      const originalOnError = websocket.onerror;
+      websocket.onerror = (error: Event) => {
+        if (resolved) {
+          // Connection was already established, let the outer onerror handle it
+          if (originalOnError) originalOnError.call(websocket, error);
+          return;
+        }
+        resolved = true;
+        reject(new WebSocketError('Failed to connect to TTS service. Please try again.'));
+      };
 
       // Set up a timeout for connection establishment
       if (this.connectionTimeout) {
         setTimeout(() => {
-          if (websocket.readyState === WebSocket.CONNECTING) {
+          if (!resolved && websocket.readyState === WebSocket.CONNECTING) {
+            resolved = true;
             websocket.close();
             reject(new WebSocketError('Connection timeout'));
           }
