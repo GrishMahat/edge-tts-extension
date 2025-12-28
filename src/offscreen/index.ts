@@ -68,6 +68,20 @@ const player = new TTSPlayer({
     originatingTabId = null;
     sendPlaybackState('error', error);
   },
+  onHighlight: (data) => {
+    // Forward word boundary events to the content script for highlighting
+    if (originatingTabId !== null) {
+      browser.runtime.sendMessage({
+        action: 'wordBoundary',
+        text: data.text,
+        start: data.start,
+        duration: data.duration,
+        originatingTabId,
+      }).catch((err) => {
+        // Silently ignore - tab may have closed
+      });
+    }
+  },
 });
 
 // Listen for messages from background script

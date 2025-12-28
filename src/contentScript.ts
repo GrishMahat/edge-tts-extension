@@ -16,6 +16,10 @@ let isPlaying = false;
 let usingOffscreenAudio = false;
 let currentSettings: any = {};
 
+// Track highlighted text for sentence/paragraph granularity
+let lastHighlightedSentence: string | null = null;
+let accumulatedWords: string[] = [];
+
 // Create TTS player with callbacks for UI updates
 const player = new TTSPlayer({
   onLoading: () => {
@@ -40,10 +44,44 @@ const player = new TTSPlayer({
       matcher.clear();
       matcher = null;
     }
+    // Reset tracking
+    lastHighlightedSentence = null;
+    accumulatedWords = [];
   },
   onHighlight: (data) => {
     if (matcher && currentSettings.enableHighlighting) {
       const mode = currentSettings.highlightGranularity || 'word';
+      
+      let shouldHighlight = true;
+      
+      if (mode === 'sentence') {
+        // For sentence mode: only highlight when starting a new sentence
+        // A new sentence starts when:
+        // 1. This is the first word
+        // 2. The previous word ended with sentence-ending punctuation attached to it
+        if (accumulatedWords.length > 0) {
+          const prevWord = accumulatedWords[accumulatedWords.length - 1];
+          // Check if previous word ended with sentence terminator
+          shouldHighlight = /[.!?]["']?$/.test(prevWord.trim());
+        }
+        accumulatedWords.push(data.text);
+      } else if (mode === 'paragraph') {
+        // For paragraph mode: only highlight once at the start
+        // Paragraphs typically stay consistent during TTS playback
+        // We'd need newline detection from the original text to do better
+        if (accumulatedWords.length > 0) {
+          shouldHighlight = false; // Keep the same paragraph highlight
+        }
+        accumulatedWords.push(data.text);
+      }
+      // For 'word' mode, always highlight (shouldHighlight stays true)
+      
+      if (!shouldHighlight) {
+        // Still advance the matcher position even if we don't update the highlight
+        matcher.advancePosition(data.text);
+        return; // Skip this word, keep current highlight
+      }
+      
       const node = matcher.highlightWord(data.text, mode);
 
       if (currentSettings.autoScroll && node) {
@@ -324,6 +362,14 @@ browser.runtime.onMessage.addListener(function handleMessage(
         matcher = new WordMatcher(document.body, 0);
     }
 
+    // Clear the selection if highlighting is enabled so only the TTS highlight is visible
+    if (currentSettings.enableHighlighting && selection) {
+      selection.removeAllRanges();
+    }
+    
+    // Reset accumulated words for sentence/paragraph mode
+    accumulatedWords = [];
+
     initTTS(request.text!).catch((error) => {
       // console.error("TTS initialization error:", error);
     });
@@ -360,6 +406,15 @@ browser.runtime.onMessage.addListener(function handleMessage(
            matcher = null;
         }
 
+        // Clear the selection if highlighting is enabled
+        const selection = window.getSelection();
+        if (currentSettings.enableHighlighting && selection) {
+          selection.removeAllRanges();
+        }
+        
+        // Reset accumulated words for sentence/paragraph mode
+        accumulatedWords = [];
+
         initTTS(textToRead).catch((error) => {
           // console.error("TTS initialization error:", error);
         });
@@ -382,6 +437,60 @@ browser.runtime.onMessage.addListener(function handleMessage(
   }
   else if (request.action === 'updatePlaybackState') {
     updateOffscreenPlaybackState(request.state, request.error);
+  }
+  // Handle word boundary events from offscreen playback for highlighting
+  else if (request.action === 'highlightWord') {
+    if (matcher && currentSettings.enableHighlighting) {
+      const mode = currentSettings.highlightGranularity || 'word';
+      const text = request.text as string;
+      
+      let shouldHighlight = true;
+      
+      if (mode === 'sentence') {
+        if (accumulatedWords.length > 0) {
+          const prevWord = accumulatedWords[accumulatedWords.length - 1];
+          shouldHighlight = /[.!?]["']?$/.test(prevWord.trim());
+        }
+        accumulatedWords.push(text);
+      } else if (mode === 'paragraph') {
+        if (accumulatedWords.length > 0) {
+          shouldHighlight = false;
+        }
+        accumulatedWords.push(text);
+      }
+      
+      if (!shouldHighlight) {
+        matcher.advancePosition(text);
+        return;
+      }
+      
+      const node = matcher.highlightWord(text, mode);
+
+      if (currentSettings.autoScroll && node) {
+        try {
+          const element = node.nodeType === Node.TEXT_NODE ? node.parentElement : node as Element;
+          if (element) {
+            const rect = element.getBoundingClientRect();
+            const isInViewport = (
+              rect.top >= 0 &&
+              rect.left >= 0 &&
+              rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
+              rect.right <= (window.innerWidth || document.documentElement.clientWidth)
+            );
+
+            if (!isInViewport) {
+              element.scrollIntoView({
+                behavior: 'smooth',
+                block: 'center',
+                inline: 'nearest'
+              });
+            }
+          }
+        } catch(e) {
+          // Ignore scroll errors
+        }
+      }
+    }
   }
   else if (request.action === 'extractTextFromHere' && request.text) {
     try {

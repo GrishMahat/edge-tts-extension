@@ -392,6 +392,21 @@ browser.runtime.onMessage.addListener(function handleMessage(
       }
     }
   }
+  // Handle word boundary events from offscreen document for highlighting
+  else if (message.action === 'wordBoundary') {
+    const targetTabId = (message as any).originatingTabId || originatingTabId;
+    
+    if (targetTabId) {
+      browser.tabs.sendMessage(targetTabId, {
+        action: 'highlightWord',
+        text: (message as any).text,
+        start: (message as any).start,
+        duration: (message as any).duration,
+      }).catch(() => {
+        // Silently ignore - tab may have closed
+      });
+    }
+  }
   else if (message.action === 'offscreen:togglePlayback' || message.action === 'offscreen:stopPlayback') {
     if (hasOffscreenAPI()) {
       // Check if offscreen exists first
