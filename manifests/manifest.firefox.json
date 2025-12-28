@@ -10,7 +10,7 @@
     }
   },
   "homepage_url": "https://github.com/travisvn/edge-tts-extension",
-  "offline_enabled": true,
+
   "incognito": "spanning",
   "action": {
     "default_popup": "popup/index.html"
