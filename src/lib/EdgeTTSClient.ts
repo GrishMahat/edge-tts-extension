@@ -1,5 +1,6 @@
 import { DRM } from './drm';
 import { VoiceCache } from '../utils/voiceCache';
+import { VALID_AUDIO_CONTENT_TYPES, SEC_MS_GEC_VERSION } from '../utils/constants';
 
 export enum OUTPUT_FORMAT {
   AUDIO_24KHZ_48KBITRATE_MONO_MP3 = "audio-24khz-48kbitrate-mono-mp3",
@@ -59,14 +60,60 @@ class EventEmitter {
   }
 }
 
+export type ContentCategory =
+  | "General"
+  | "News"
+  | "Novel"
+  | " Novel"
+  | "Cartoon"
+  | "Sports"
+  | "Dialect"
+  | "Conversation"
+  | "Copilot";
+
+export type VoicePersonality =
+  | "Friendly"
+  | "Positive"
+  | "Warm"
+  | "Lively"
+  | "Passion"
+  | "Cute"
+  | "Humorous"
+  | "Professional"
+  | "Reliable"
+  | "Expressive"
+  | "Caring"
+  | "Pleasant"
+  | "Confident"
+  | "Authentic"
+  | "Honest"
+  | "Rational"
+  | "Considerate"
+  | "Comfort"
+  | "Cheerful"
+  | "Clear"
+  | "Conversational"
+  | "Authority"
+  | "Approachable"
+  | "Casual"
+  | "Sincere"
+  | "Bright"
+  | "Sunshine";
+
+export type VoiceTag = {
+  ContentCategories: ContentCategory[];
+  VoicePersonalities: VoicePersonality[];
+};
+
 export type Voice = {
   Name: string;
   ShortName: string;
-  Gender: string;
+  Gender: "Male" | "Female";
   Locale: string;
   SuggestedCodec: string;
   FriendlyName: string;
-  Status: string;
+  Status: "GA" | "Preview" | "Deprecated";
+  VoiceTag: VoiceTag;
 };
 
 type Metadata = {
@@ -89,7 +136,9 @@ export class EdgeTTSClient {
   private static SYNTH_URL = `wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=${EdgeTTSClient.CLIENT_TOKEN}`;
   private static BINARY_DELIM = "Path:audio\r\n";
   private static VOICE_LANG_REGEX = /\w{2}-\w{2}/;
-  private static SEC_MS_GEC_VERSION = "1-130.0.2849.68";
+  // private static SEC_MS_GEC_VERSION = "1-130.0.2849.68";
+  private static SEC_MS_GEC_VERSION = SEC_MS_GEC_VERSION;
+
 
   private enableLogging: boolean;
   private isBrowser: boolean;
@@ -194,7 +243,15 @@ export class EdgeTTSClient {
       metadataBuffer.length = 0;
     } else if (message.includes("Path:turn.end")) {
       this.requestQueue[requestId]?.emit("end", metadataBuffer);
-    } else if (message.includes("Path:audio")) {
+    } else if (message.includes("Path:audio\r\n")) {
+      // Extract and validate Content-Type header
+      const contentTypeMatch = /Content-Type:(.*?)\r\n/.exec(message);
+      const contentType = contentTypeMatch ? contentTypeMatch[1].trim() : null;
+
+      if (contentType && !VALID_AUDIO_CONTENT_TYPES.includes(contentType as any)) {
+        this.log("Unexpected audio content type:", contentType);
+      }
+
       this.cacheAudioData(buffer, requestId);
     } else if (message.includes("Path:audio.metadata")) {
       const startIndex = message.indexOf("{");

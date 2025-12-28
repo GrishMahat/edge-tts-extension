@@ -1,4 +1,6 @@
-/****
+import { TRUSTED_CLIENT_TOKEN } from '../utils/constants';
+
+/**
  * DRM class for generating Sec-MS-GEC tokens required by Microsoft Edge TTS API
  */
 export class DRM {
@@ -7,9 +9,6 @@ export class DRM {
 
   // Seconds to nanoseconds conversion factor
   private static readonly S_TO_NS = 1e9;
-
-  // Trusted client token used in hash generation
-  private static readonly TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
 
   // Clock skew adjustment in seconds
   private static clockSkewSeconds = 0.0;
@@ -61,7 +60,7 @@ export class DRM {
     ticks *= this.S_TO_NS / 100;
 
     // Create string to hash by concatenating ticks and trusted client token
-    const strToHash = `${Math.floor(ticks)}${this.TRUSTED_CLIENT_TOKEN}`;
+    const strToHash = `${Math.floor(ticks)}${TRUSTED_CLIENT_TOKEN}`;
 
     // Compute SHA256 hash and return uppercase hex digest
     return await this.sha256(strToHash);

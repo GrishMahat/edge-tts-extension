@@ -185,11 +185,8 @@ export function connectId(): string {
   array[6] = (array[6] & 0x0f) | 0x40;
   array[8] = (array[8] & 0x3f) | 0x80;
 
-  // Convert to hex string and format as UUID, then remove hyphens
-  const hex = Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
-  const uuid = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
-
-  return uuid.replace(/-/g, '');
+  // Convert to hex string
+  return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
 /**
