@@ -2,7 +2,7 @@
  * Shared TTS Audio Player module.
  * Used by both contentScript (fallback mode) and offscreen document.
  */
-import { BrowserCommunicate, BrowserCommunicateOptions } from './browserCommunicate';
+import { BrowserCommunicate, BrowserCommunicateOptions, BrowserTTSChunk } from './browserCommunicate';
 import { isFirefox } from './browserDetection';
 
 export interface TTSPlayerCallbacks {
@@ -11,12 +11,15 @@ export interface TTSPlayerCallbacks {
   onPaused?: () => void;
   onStopped?: () => void;
   onError?: (error: string) => void;
+  onHighlight?: (data: { text: string; start: number; duration: number }) => void;
 }
 
 export interface TTSSettings {
   voiceName?: string;
   customVoice?: string;
   speed?: number;
+  pitch?: string;
+  volume?: string;
 }
 
 /**
@@ -32,6 +35,11 @@ export class TTSPlayer {
   // Track media resources for cleanup
   private mediaSource: MediaSource | null = null;
   private sourceBuffer: SourceBuffer | null = null;
+
+  // Queue for word boundary events
+  private wordQueue: Array<{ time: number; duration: number; text: string }> = [];
+  private syncFrameId: number | null = null;
+
 
   constructor(callbacks: TTSPlayerCallbacks = {}) {
     this.callbacks = callbacks;
@@ -53,6 +61,8 @@ export class TTSPlayer {
 
       const voiceName = settings?.customVoice || settings?.voiceName || 'en-US-ChristopherNeural';
       const speed = settings?.speed || 1.2;
+      const pitch = settings?.pitch || '+0Hz';
+      const volume = settings?.volume || '+0%';
 
       // Convert speed setting to TTS format
       const speedPercent = Math.round((speed - 1) * 100);
@@ -61,6 +71,8 @@ export class TTSPlayer {
       const browserCommunicateOptions: BrowserCommunicateOptions = {
         voice: voiceName,
         rate: rateString,
+        volume: volume,
+        pitch: pitch,
         connectionTimeout: 10000,
       };
 
@@ -84,12 +96,59 @@ export class TTSPlayer {
           this.audioElement.muted = true;
           this.audioElement.src = URL.createObjectURL(mediaSource);
 
+
+
+          const checkHighlights = () => {
+            if (!this.isPlaying || !this.audioElement) return;
+            
+            const currentTime = this.audioElement.currentTime;
+            
+            // Dispatch any words that constitute the "current" word
+            // We look at the front of the queue
+            while (this.wordQueue.length > 0) {
+              const word = this.wordQueue[0];
+              // 100ms tolerance for "current"
+              // If word.time is in the future (> currentTime + epsilon), stop
+              if (word.time > currentTime + 0.1) {
+                break;
+              }
+              
+              // If word is too old (< currentTime - duration - epsilon), discard it
+              // But maybe we missed it? Better to just show it briefly or skip?
+              // Let's assume if it's within [time, time + duration], it's valid.
+              // If it's effectively "passed", we pop it.
+              
+              if (word.time + word.duration < currentTime) {
+                // Old word, remove it
+                this.wordQueue.shift();
+                continue;
+              }
+              
+              // It is current!
+              this.callbacks.onHighlight?.({
+                text: word.text,
+                start: word.time,
+                duration: word.duration
+              });
+              
+              // We emitted it. Should we remove it?
+              // If we remove it immediately, we won't emit it again for the rest of its duration.
+              // That's fine, we usually want "onEnter" style events.
+              this.wordQueue.shift();
+            }
+            
+            if (isActive) {
+              this.syncFrameId = requestAnimationFrame(checkHighlights);
+            }
+          };
+
           this.audioElement.onplay = () => {
             if (this.audioElement) {
               this.audioElement.muted = false;
             }
             this.isPlaying = true;
             this.callbacks.onPlaying?.();
+            checkHighlights();
           };
 
           this.audioElement.onpause = () => {
@@ -186,6 +245,15 @@ export class TTSPlayer {
                     cloned.set(chunk.data);
                     chunks.push(cloned);
                     appendNextChunk();
+                  } else if (chunk.type === 'WordBoundary' && chunk.text && chunk.offset !== undefined && chunk.duration !== undefined) {
+                      // Convert ticks (100ns) to seconds
+                      const timeInSeconds = chunk.offset / 10_000_000;
+                      const durationInSeconds = chunk.duration / 10_000_000;
+                      this.wordQueue.push({
+                          time: timeInSeconds,
+                          duration: durationInSeconds,
+                          text: chunk.text
+                      });
                   }
                 }
 
@@ -209,9 +277,8 @@ export class TTSPlayer {
                 };
                 checkAndEndStream();
               } catch (error) {
-                console.error('TTS streaming error:', error);
                 this.cleanup();
-                this.callbacks.onError?.((error as Error).message || 'TTS streaming error');
+                // this.callbacks.onError?.((error as Error).message || 'TTS streaming error');
                 reject(error);
               }
             })();
@@ -259,6 +326,14 @@ export class TTSPlayer {
       this.currentTTSDeactivate();
       this.currentTTSDeactivate = null;
     }
+
+    if (this.syncFrameId) {
+      cancelAnimationFrame(this.syncFrameId);
+      this.syncFrameId = null;
+    }
+    
+    this.wordQueue = [];
+
 
     if (this.sourceBuffer) {
       try {

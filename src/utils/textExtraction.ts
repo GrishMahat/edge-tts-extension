@@ -2,17 +2,23 @@
  * Text extraction utilities for reading from specific positions in the DOM
  */
 
+export interface ExtractedText {
+  text: string;
+  anchorNode?: Node;
+  anchorOffset?: number;
+}
+
 /**
  * Extract text content from the current selection point to the end of the page
  * @param selectedText The text that was selected by the user
- * @returns The text content from the selection point forward
+ * @returns The text content from the selection point forward with anchor info
  */
-export function extractTextFromSelection(selectedText: string): string {
+export function extractTextFromSelection(selectedText: string): ExtractedText {
   const selection = window.getSelection();
 
   if (!selection || selection.rangeCount === 0) {
     // Fallback to entire page if no selection
-    return document.body.innerText;
+    return { text: document.body.innerText };
   }
 
   try {
@@ -21,11 +27,15 @@ export function extractTextFromSelection(selectedText: string): string {
     const startOffset = range.startOffset;
 
     // Find the text content from this point forward
-    return extractTextFromPosition(startContainer, startOffset);
+    return {
+       ...extractTextFromPosition(startContainer, startOffset),
+       anchorNode: startContainer,
+       anchorOffset: startOffset
+    };
   } catch (error) {
     console.warn('Error extracting text from selection:', error);
     // Fallback to entire page
-    return document.body.innerText;
+    return { text: document.body.innerText };
   }
 }
 
@@ -35,7 +45,7 @@ export function extractTextFromSelection(selectedText: string): string {
  * @param startOffset The character offset within the start node
  * @returns The extracted text content
  */
-function extractTextFromPosition(startNode: Node, startOffset: number): string {
+function extractTextFromPosition(startNode: Node, startOffset: number): { text: string } {
   const textParts: string[] = [];
 
   // If we're starting in a text node, get the remaining text from that node
@@ -53,7 +63,7 @@ function extractTextFromPosition(startNode: Node, startOffset: number): string {
     : startNode as Element;
 
   if (!startElement) {
-    return textParts.join('');
+    return { text: textParts.join('') };
   }
 
   // Create a tree walker to traverse all text nodes from this point forward
@@ -90,10 +100,10 @@ function extractTextFromPosition(startNode: Node, startOffset: number): string {
 
   // If we haven't found our start position yet, we need to look at sibling elements
   if (!foundStartPosition) {
-    return extractTextFromSiblingElements(startElement);
+    return { text: extractTextFromSiblingElements(startElement) };
   }
 
-  return textParts.join(' ').replace(/\s+/g, ' ').trim();
+  return { text: textParts.join(' ').replace(/\s+/g, ' ').trim() };
 }
 
 /**
@@ -199,11 +209,11 @@ function extractTextFromSiblingElements(startElement: Element): string {
  * Fallback function to extract text using a simpler approach
  * This can be used if the advanced DOM traversal fails
  */
-export function extractTextFromSelectionSimple(selectedText: string): string {
+export function extractTextFromSelectionSimple(selectedText: string): ExtractedText {
   const selection = window.getSelection();
 
   if (!selection || selection.rangeCount === 0) {
-    return document.body.innerText;
+    return { text: document.body.innerText };
   }
 
   try {
@@ -215,13 +225,13 @@ export function extractTextFromSelectionSimple(selectedText: string): string {
 
     if (selectionStart !== -1) {
       // Return everything from the selection onward
-      return fullText.substring(selectionStart);
+      return { text: fullText.substring(selectionStart) };
     }
 
     // If we can't find the exact text, return the full page
-    return fullText;
+    return { text: fullText };
   } catch (error) {
     console.warn('Error in simple text extraction:', error);
-    return document.body.innerText;
+    return { text: document.body.innerText };
   }
 }

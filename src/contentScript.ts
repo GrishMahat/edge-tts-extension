@@ -5,12 +5,16 @@ import {
   updatePanelContent,
 } from "./components/controlPanel";
 import { circlePause, circlePlay } from './lib/svgs';
-import { extractTextFromSelection, extractTextFromSelectionSimple } from './utils/textExtraction';
+import { extractTextFromSelection, extractTextFromSelectionSimple, ExtractedText } from './utils/textExtraction';
 import { TTSPlayer } from './utils/ttsPlayer';
+import { WordMatcher } from './utils/wordMatcher';
+
+let matcher: WordMatcher | null = null;
 
 let controlPanel: HTMLElement | null = null;
 let isPlaying = false;
 let usingOffscreenAudio = false;
+let currentSettings: any = {};
 
 // Create TTS player with callbacks for UI updates
 const player = new TTSPlayer({
@@ -32,6 +36,42 @@ const player = new TTSPlayer({
     isPlaying = false;
     updatePlayPauseButton();
     removeControlPanel();
+    if (matcher) {
+      matcher.clear();
+      matcher = null;
+    }
+  },
+  onHighlight: (data) => {
+    if (matcher && currentSettings.enableHighlighting) {
+      const mode = currentSettings.highlightGranularity || 'word';
+      const node = matcher.highlightWord(data.text, mode);
+
+      if (currentSettings.autoScroll && node) {
+          // Robust auto-scroll implementation
+          try {
+             const element = node.nodeType === Node.TEXT_NODE ? node.parentElement : node as Element;
+             if (element) {
+                const rect = element.getBoundingClientRect();
+                const isInViewport = (
+                    rect.top >= 0 &&
+                    rect.left >= 0 &&
+                    rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
+                    rect.right <= (window.innerWidth || document.documentElement.clientWidth)
+                );
+
+                if (!isInViewport) {
+                    element.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'center',
+                        inline: 'nearest'
+                    });
+                }
+             }
+          } catch(e) {
+             // Ignore scroll errors
+          }
+      }
+    }
   },
   onError: (error) => {
     // Check if this is a CSP error - if so, try offscreen fallback silently
@@ -84,7 +124,20 @@ export async function initTTS(text: string, useOffscreen = false): Promise<void>
       voiceName: "en-US-ChristopherNeural",
       customVoice: "",
       speed: 1.2,
+      pitch: "+0Hz",
+      volume: "+0%",
+      enableHighlighting: false,
+      highlightColor: "#ffe42e",
+      autoScroll: false,
     });
+
+    // Apply highlight color
+    if (settings.highlightColor) {
+      document.documentElement.style.setProperty('--etts-highlight-bg', settings.highlightColor as string);
+    }
+    
+    // Store for usage in callbacks
+    currentSettings = settings;
 
     // If CSP issues detected or forced offscreen, use offscreen document
     if (useOffscreen) {
@@ -112,6 +165,8 @@ export async function initTTS(text: string, useOffscreen = false): Promise<void>
       voiceName: settings.voiceName as string,
       customVoice: settings.customVoice as string,
       speed: settings.speed as number,
+      pitch: settings.pitch as string,
+      volume: settings.volume as string,
     });
   } catch (error: any) {
     console.error("TTS Error:", error);
@@ -168,6 +223,8 @@ async function initTTSViaOffscreen(text: string, settings: any): Promise<void> {
         voiceName: settings.voiceName || 'en-US-ChristopherNeural',
         customVoice: settings.customVoice || '',
         speed: settings.speed || 1.2,
+        pitch: settings.pitch || '+0Hz',
+        volume: settings.volume || '+0%',
       },
     });
   } catch (error) {
@@ -257,12 +314,26 @@ browser.runtime.onMessage.addListener(function handleMessage(
     }
   }
   else if (request.action === "readText") {
+    // Attempt to initialize matcher from selection if it matches the text
+    // This ensures we highlight the correct occurrence if there are duplicates
+    const selection = window.getSelection();
+    if (selection && selection.rangeCount > 0 && selection.toString().includes(request.text!.substring(0, 20))) {
+         matcher = new WordMatcher(selection.anchorNode || document.body, selection.anchorOffset);
+    } else {
+        // Fallback: search from start of body (might pick first occurrence)
+        matcher = new WordMatcher(document.body, 0);
+    }
+
     initTTS(request.text!).catch((error) => {
       // console.error("TTS initialization error:", error);
     });
   }
   else if (request.action === 'readPage') {
     const pageContent = document.body.innerText;
+    
+    // Initialize matcher for full page
+    matcher = new WordMatcher(document.body, 0);
+
     if (pageContent && pageContent.trim() !== '') {
       initTTS(pageContent).catch((error) => {
         // console.error("TTS initialization error:", error);
@@ -273,11 +344,22 @@ browser.runtime.onMessage.addListener(function handleMessage(
   }
   else if (request.action === 'readFromHere' && request.text) {
     try {
-      let textToRead = extractTextFromSelection(request.text);
+      let extraction: ExtractedText = extractTextFromSelection(request.text);
+      let textToRead = extraction.text;
+      
       if (!textToRead || textToRead.trim().length === 0) {
-        textToRead = extractTextFromSelectionSimple(request.text);
+        extraction = extractTextFromSelectionSimple(request.text);
+        textToRead = extraction.text;
       }
+      
       if (textToRead && textToRead.trim() !== '') {
+        // Initialize WordMatcher with anchor info
+        if (extraction.anchorNode && extraction.anchorOffset !== undefined) {
+           matcher = new WordMatcher(extraction.anchorNode, extraction.anchorOffset);
+        } else {
+           matcher = null;
+        }
+
         initTTS(textToRead).catch((error) => {
           // console.error("TTS initialization error:", error);
         });
@@ -303,9 +385,11 @@ browser.runtime.onMessage.addListener(function handleMessage(
   }
   else if (request.action === 'extractTextFromHere' && request.text) {
     try {
-      let textToRead = extractTextFromSelection(request.text);
+      let extraction = extractTextFromSelection(request.text);
+      let textToRead = extraction.text;
       if (!textToRead || textToRead.trim().length === 0) {
-        textToRead = extractTextFromSelectionSimple(request.text);
+        extraction = extractTextFromSelectionSimple(request.text);
+        textToRead = extraction.text;
       }
       if (!textToRead || textToRead.trim().length === 0) {
         textToRead = request.text;

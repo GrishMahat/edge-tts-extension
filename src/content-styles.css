@@ -7,6 +7,8 @@
   --etts-button-bg: #007bff;
   --etts-button-text: #ffffff;
   --etts-hover-bg: #0056b3;
+  --etts-highlight-bg: #ffe42e;
+  --etts-highlight-text: #000000;
 }
 
 [data-theme='dark'] {
@@ -18,7 +20,11 @@
   --etts-button-bg: #0d6efd;
   --etts-button-text: #ffffff;
   --etts-hover-bg: #0b5ed7;
+  --etts-highlight-bg: #a88400; /* Darker yellow/gold for dark mode */
+  --etts-highlight-text: #ffffff;
 }
+
+/* ... existing styles ... */
 
 .etts-flex-center {
   display: flex;
@@ -184,4 +190,10 @@
   display: flex;
   justify-content: flex-end;
   margin-top: 4px;
+}
+
+/* CSS Custom Highlight API styles */
+::highlight(tts-active) {
+  background-color: var(--etts-highlight-bg, #ffe42e);
+  color: var(--etts-highlight-text, #000000);
 }
