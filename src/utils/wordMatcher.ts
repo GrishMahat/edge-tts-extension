@@ -64,7 +64,7 @@ export class WordMatcher {
 
   /**
    * Advances the internal position past the given word WITHOUT changing the highlight.
-   * Used for sentence/paragraph mode to keep track of position while not updating highlight.
+   * Used for sentence mode to keep track of position while not updating highlight.
    */
   advancePosition(word: string): void {
     if (!word || !word.trim()) return;
@@ -121,7 +121,7 @@ export class WordMatcher {
    * Highlights the next occurrence of the given word text.
    * @returns The node that was highlighted (or part of it), to aid auto-scrolling
    */
-  highlightWord(word: string, mode: 'word' | 'sentence' | 'paragraph' = 'word'): Node | null {
+  highlightWord(word: string, mode: 'word' | 'sentence' = 'word'): Node | null {
     if (!word || !word.trim()) return null;
     
     // Normalize word
@@ -181,18 +181,7 @@ export class WordMatcher {
         let rangeStart = foundStart;
         let rangeEnd = foundEnd;
 
-        if (mode === 'paragraph' && foundNode.parentElement) {
-            const parent = foundNode.parentElement;
-            const range = document.createRange();
-            range.selectNodeContents(parent);
-            this.applyHighlight(range);
-            
-            // Update position tracking
-            this.currentNode = foundNode;
-            this.currentOffset = foundEnd;
-            this.walker.currentNode = foundNode;
-            return parent;
-        } else if (mode === 'sentence') {
+        if (mode === 'sentence') {
             const fullText = foundNode.textContent || '';
             
             // Expand left

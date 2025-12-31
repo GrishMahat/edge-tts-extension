@@ -16,7 +16,7 @@ let isPlaying = false;
 let usingOffscreenAudio = false;
 let currentSettings: any = {};
 
-// Track highlighted text for sentence/paragraph granularity
+// Track highlighted text for sentence granularity
 let lastHighlightedSentence: string | null = null;
 let accumulatedWords: string[] = [];
 
@@ -63,14 +63,6 @@ const player = new TTSPlayer({
           const prevWord = accumulatedWords[accumulatedWords.length - 1];
           // Check if previous word ended with sentence terminator
           shouldHighlight = /[.!?]["']?$/.test(prevWord.trim());
-        }
-        accumulatedWords.push(data.text);
-      } else if (mode === 'paragraph') {
-        // For paragraph mode: only highlight once at the start
-        // Paragraphs typically stay consistent during TTS playback
-        // We'd need newline detection from the original text to do better
-        if (accumulatedWords.length > 0) {
-          shouldHighlight = false; // Keep the same paragraph highlight
         }
         accumulatedWords.push(data.text);
       }
@@ -384,7 +376,7 @@ browser.runtime.onMessage.addListener(function handleMessage(
       selection.removeAllRanges();
     }
     
-    // Reset accumulated words for sentence/paragraph mode
+    // Reset accumulated words for sentence mode
     accumulatedWords = [];
 
     initTTS(request.text!).catch((error) => {
@@ -429,7 +421,7 @@ browser.runtime.onMessage.addListener(function handleMessage(
           selection.removeAllRanges();
         }
         
-        // Reset accumulated words for sentence/paragraph mode
+        // Reset accumulated words for sentence mode
         accumulatedWords = [];
 
         initTTS(textToRead).catch((error) => {
@@ -470,10 +462,6 @@ browser.runtime.onMessage.addListener(function handleMessage(
           shouldHighlight = /[.!?]["']?$/.test(prevWord.trim());
         }
         accumulatedWords.push(text);
-      } else if (mode === 'paragraph') {
-        if (accumulatedWords.length > 0) {
-          shouldHighlight = false;
-        }
         accumulatedWords.push(text);
       }
       

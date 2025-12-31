@@ -196,4 +196,8 @@
 ::highlight(tts-active) {
   background-color: var(--etts-highlight-bg, #ffe42e);
   color: var(--etts-highlight-text, #000000);
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.4);
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }

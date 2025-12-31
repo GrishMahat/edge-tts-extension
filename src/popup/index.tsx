@@ -321,7 +321,6 @@ function Popup() {
                 >
                   <option value="word">Word by Word</option>
                   <option value="sentence">Sentence by Sentence</option>
-                  <option value="paragraph">Paragraph by Paragraph</option>
                 </select>
              </div>
 
