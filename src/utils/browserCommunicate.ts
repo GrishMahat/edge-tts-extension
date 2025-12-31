@@ -20,7 +20,7 @@ import { isFirefox } from './browserDetection';
 
 // Browser-specific types (avoiding Node.js Buffer dependency)
 export type BrowserTTSChunk = {
-  type: "audio" | "WordBoundary";
+  type: "audio" | "WordBoundary" | "SentenceBoundary";
   data?: Uint8Array;
   duration?: number;
   offset?: number;
@@ -223,27 +223,40 @@ export class BrowserCommunicate {
     this.connectionTimeout = options.connectionTimeout;
   }
 
-  private parseMetadata(data: Uint8Array): BrowserTTSChunk {
-    const metadata = JSON.parse(new TextDecoder().decode(data));
-    for (const metaObj of metadata['Metadata']) {
-      const metaType = metaObj['Type'];
-      if (metaType === 'WordBoundary') {
-        const currentOffset = metaObj['Data']['Offset'] + this.state.offsetCompensation;
-        const currentDuration = metaObj['Data']['Duration'];
-        return {
-          type: metaType,
-          offset: currentOffset,
-          duration: currentDuration,
-          text: unescape(metaObj['Data']['text']['Text']),
-        };
-      }
+  private parseMetadata(data: Uint8Array): BrowserTTSChunk[] {
+    const decoded = new TextDecoder().decode(data);
+    const metadata = JSON.parse(decoded);
+
+    const results: BrowserTTSChunk[] = [];
+
+    for (const metaObj of metadata.Metadata ?? []) {
+      const metaType = metaObj.Type;
+
       if (metaType === 'SessionEnd') {
         continue;
       }
-      throw new UnknownResponse(`Unknown metadata type: ${metaType}`);
+
+      if (metaType !== 'WordBoundary' && metaType !== 'SentenceBoundary') {
+        // Unknown metadata should not nuke the stream
+        continue;
+      }
+
+
+
+      const rawOffset = metaObj.Data.Offset;
+      const rawDuration = metaObj.Data.Duration;
+
+      results.push({
+        type: metaType,
+        offset: (rawOffset + this.state.offsetCompensation) / 10,
+        duration: rawDuration / 10,
+        text: metaObj.Data.text?.Text ?? '',
+      });
     }
-    throw new UnexpectedResponse('No WordBoundary metadata found');
+
+    return results;
   }
+
 
   /*
    * Helper to establish WebSocket connection with retry logic.
@@ -341,8 +354,12 @@ export class BrowserCommunicate {
         if (path === 'audio.metadata') {
           try {
             const parsedMetadata = this.parseMetadata(parsedData);
-            this.state.lastDurationOffset = parsedMetadata.offset! + parsedMetadata.duration!;
-            messageQueue.push(parsedMetadata);
+            if (parsedMetadata) {
+              for (const meta of parsedMetadata) {
+                this.state.lastDurationOffset = meta.offset! + meta.duration!;
+                messageQueue.push(meta);
+              }
+            }
           } catch (e) {
             messageQueue.push(e as Error);
           }
@@ -481,7 +498,7 @@ export class BrowserCommunicate {
       + 'Content-Type:application/json; charset=utf-8\r\n'
       + 'Path:speech.config\r\n\r\n'
       + '{"context":{"synthesis":{"audio":{"metadataoptions":{'
-      + '"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"true"},'
+      + '"sentenceBoundaryEnabled":"true","wordBoundaryEnabled":"true"},'
       + `"outputFormat":"${outputFormat}"`
       + '}}}}\r\n'
     );

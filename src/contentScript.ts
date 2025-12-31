@@ -247,6 +247,23 @@ async function tryOffscreenFallback(): Promise<void> {
 async function initTTSViaOffscreen(text: string, settings: any): Promise<void> {
   usingOffscreenAudio = true;
   
+  // Initialize matcher from current selection BEFORE it gets lost
+  if (settings.enableHighlighting) {
+    const selection = window.getSelection();
+    if (selection && selection.rangeCount > 0 && selection.anchorNode) {
+      matcher = new WordMatcher(selection.anchorNode, selection.anchorOffset);
+      // Clear selection so only TTS highlight is visible
+      selection.removeAllRanges();
+    } else {
+      // Fallback: search from start of body
+      matcher = new WordMatcher(document.body, 0);
+    }
+    accumulatedWords = [];
+  }
+  
+  // Store settings for the highlight handler
+  currentSettings = { ...currentSettings, ...settings };
+  
   // Show loading UI immediately
   if (!controlPanel) {
     controlPanel = await createControlPanel(true);
@@ -440,6 +457,7 @@ browser.runtime.onMessage.addListener(function handleMessage(
   }
   // Handle word boundary events from offscreen playback for highlighting
   else if (request.action === 'highlightWord') {
+    
     if (matcher && currentSettings.enableHighlighting) {
       const mode = currentSettings.highlightGranularity || 'word';
       const text = request.text as string;
@@ -515,6 +533,24 @@ browser.runtime.onMessage.addListener(function handleMessage(
 async function showOffscreenUI() {
   player.cleanup();
   removeControlPanel();
+  
+  // Load settings for highlighting support (in case not already loaded)
+  const settings = await browser.storage.sync.get({
+    enableHighlighting: false,
+    highlightColor: "#ffe42e",
+    highlightGranularity: 'word',
+    autoScroll: false,
+  });
+  currentSettings = { ...currentSettings, ...settings };
+  
+  // Apply highlight color
+  if (settings.highlightColor) {
+    document.documentElement.style.setProperty('--etts-highlight-bg', settings.highlightColor as string);
+  }
+  
+  // Note: Matcher should already be initialized in initTTSViaOffscreen
+  // Don't reinitialize here as the selection may already be gone
+  
   controlPanel = await createControlPanel(true);
 }
 
@@ -530,6 +566,8 @@ function updateOffscreenPlaybackState(state?: string, error?: string) {
 }
 
 function updateUIForState(state?: string) {
+  console.debug('[ContentScript] updateUIForState:', state);
+  
   switch (state) {
     case 'loading':
       if (controlPanel) {
@@ -551,6 +589,12 @@ function updateUIForState(state?: string) {
       isPlaying = false;
       usingOffscreenAudio = false;
       removeControlPanel();
+      // Clear matcher and highlight
+      if (matcher) {
+        matcher.clear();
+        matcher = null;
+      }
+      accumulatedWords = [];
       break;
     case 'error':
       isPlaying = false;
@@ -559,6 +603,11 @@ function updateUIForState(state?: string) {
         updatePanelContent(controlPanel, false, 'Offscreen playback error');
       } else {
         removeControlPanel();
+      }
+      // Clear matcher
+      if (matcher) {
+        matcher.clear();
+        matcher = null;
       }
       break;
   }

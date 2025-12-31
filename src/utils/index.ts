@@ -1,40 +1,36 @@
 export const cleanText = (text: string): string => {
+  if (!text) return '';
+
   return text
-    // Remove URLs but keep link text
-    .replace(/https?:\/\/[^\s<>]*?(?=[.,;:\s<>]|$)/g, '')
+    // Remove fenced code blocks
+    .replace(/```[\s\S]*?```/g, ' ')
 
-    // Remove email addresses
-    .replace(/[\w.-]+@[\w.-]+\.\w+/g, '')
+    // Remove inline code
+    .replace(/`[^`]+`/g, ' ')
 
-    // Remove code blocks
-    .replace(/```[\s\S]*?```/g, '')
-    .replace(/`[^`]*`/g, '')
-
-    // Remove markdown links but keep text
+    // Convert markdown links to visible text
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
 
-    // Remove HTML tags but keep their content
-    .replace(/<[^>]+>/g, ' ')
+    // Remove raw URLs
+    .replace(/https?:\/\/\S+/g, ' ')
 
-    // Remove multiple spaces, newlines, and tabs
+    // Remove emails
+    .replace(/\b[\w.-]+@[\w.-]+\.\w+\b/g, ' ')
+
+    // Strip HTML tags
+    .replace(/<\/?[^>]+>/g, ' ')
+
+    // Remove leading line numbers
+    .replace(/^\s*\d+\s+/gm, ' ')
+
+    // Remove programming punctuation clusters
+    .replace(/[{}[\]();=<>*/%]+/g, ' ')
+
+    // Remove common programming keywords
+    // .replace(/\b(const|let|var|function)\b/g, ' ')
+
+
+    // Collapse whitespace once, at the end
     .replace(/\s+/g, ' ')
-
-    // Remove common syntax characters
-    .replace(/[{}[\]#*_|~]/g, ' ')
-
-    // Remove standalone numbers that might be line numbers
-    .replace(/^\d+\s*/gm, '')
-
-    // Remove common programming syntax
-    .replace(
-      /\b(function|const|let|var|return|if|else|for|while|do|switch|case|break|continue|try|catch|finally)\b/g,
-      ''
-    )
-
-    // Remove common punctuation sequences that might be syntax
-    .replace(/[;{}()=+\-/*%]+/g, ' ')
-
-    // Clean up multiple spaces again
-    .replace(/\s+/g, ' ')
-    .trim()
-}
+    .trim();
+};
