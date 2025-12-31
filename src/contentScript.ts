@@ -55,14 +55,35 @@ const player = new TTSPlayer({
       let shouldHighlight = true;
       
       if (mode === 'sentence') {
-        // For sentence mode: only highlight when starting a new sentence
-        // A new sentence starts when:
-        // 1. This is the first word
-        // 2. The previous word ended with sentence-ending punctuation attached to it
+        const lang = currentSettings.voiceName ? currentSettings.voiceName.split('-').slice(0, 2).join('-') : 'en-US';
+        // @ts-ignore - Intl.Segmenter is new
+        const segmenter = new (Intl as any).Segmenter(lang, { granularity: 'sentence' });
+        
+        // We need to check if adding the new word starts a new sentence segment
+        // vs extending the current one
         if (accumulatedWords.length > 0) {
-          const prevWord = accumulatedWords[accumulatedWords.length - 1];
-          // Check if previous word ended with sentence terminator
-          shouldHighlight = /[.!?]["']?$/.test(prevWord.trim());
+           const prevText = accumulatedWords.join(' ');
+           const combinedText = prevText + ' ' + data.text;
+           
+           // Check segments of the combined text
+           // If the split point between prevText and data.text coincides with a segment boundary,
+           // then we should highlight.
+           
+           // Optimization: We could be smarter/faster, but for typical paragraph lengths this is fine
+           const segments = Array.from(segmenter.segment(combinedText));
+           const splitIndex = prevText.length;
+           
+           // Find if any segment starts exactly at (or casually around) the split boundary
+           // The segmenter might include the space in the previous segment or start the next one
+           // Usually: "Hello. World" -> "Hello. " (len 7), "World" (start 7)
+           
+           const isBoundary = segments.some((seg: any) => {
+               // A new segment starts roughly where our new word starts
+               // Allow for a generic space delta (len 1)
+               return Math.abs(seg.index - splitIndex) <= 2 && seg.index > 0;
+           });
+           
+           shouldHighlight = isBoundary;
         }
         accumulatedWords.push(data.text);
       }
@@ -242,8 +263,9 @@ async function initTTSViaOffscreen(text: string, settings: any): Promise<void> {
   // Initialize matcher from current selection BEFORE it gets lost
   if (settings.enableHighlighting) {
     const selection = window.getSelection();
-    if (selection && selection.rangeCount > 0 && selection.anchorNode) {
-      matcher = new WordMatcher(selection.anchorNode, selection.anchorOffset);
+    if (selection && selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      matcher = new WordMatcher(range.startContainer, range.startOffset);
       // Clear selection so only TTS highlight is visible
       selection.removeAllRanges();
     } else {
@@ -365,7 +387,8 @@ browser.runtime.onMessage.addListener(function handleMessage(
     // This ensures we highlight the correct occurrence if there are duplicates
     const selection = window.getSelection();
     if (selection && selection.rangeCount > 0 && selection.toString().includes(request.text!.substring(0, 20))) {
-         matcher = new WordMatcher(selection.anchorNode || document.body, selection.anchorOffset);
+         const range = selection.getRangeAt(0);
+         matcher = new WordMatcher(range.startContainer || document.body, range.startOffset);
     } else {
         // Fallback: search from start of body (might pick first occurrence)
         matcher = new WordMatcher(document.body, 0);

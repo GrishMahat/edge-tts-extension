@@ -248,8 +248,8 @@ export class BrowserCommunicate {
 
       results.push({
         type: metaType,
-        offset: (rawOffset + this.state.offsetCompensation) / 10,
-        duration: rawDuration / 10,
+        offset: rawOffset + this.state.offsetCompensation,
+        duration: rawDuration,
         text: metaObj.Data.text?.Text ?? '',
       });
     }

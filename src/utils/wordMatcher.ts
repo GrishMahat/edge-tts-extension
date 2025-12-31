@@ -183,21 +183,18 @@ export class WordMatcher {
 
         if (mode === 'sentence') {
             const fullText = foundNode.textContent || '';
+            // @ts-ignore - Intl.Segmenter is new
+            const segmenter = new (Intl as any).Segmenter('en', { granularity: 'sentence' }); // Could pass lang if available
+            const segments = segmenter.segment(fullText);
             
-            // Expand left
-            while (rangeStart > 0) {
-                const char = fullText[rangeStart - 1];
-                if (['.', '?', '!', '\n'].includes(char)) break;
-                rangeStart--;
-            }
-            // Expand right
-            while (rangeEnd < fullText.length) {
-                const char = fullText[rangeEnd];
-                if (['.', '?', '!', '\n'].includes(char)) {
-                    rangeEnd++; 
+            // Find segment containing the word range [rangeStart, rangeEnd]
+            for (const seg of segments) {
+                const segment = seg as any; 
+                if (segment.index <= rangeStart && (segment.index + segment.segment.length) >= rangeEnd) {
+                    rangeStart = segment.index;
+                    rangeEnd = segment.index + segment.segment.length;
                     break;
                 }
-                rangeEnd++;
             }
             
             this.highlightRange(foundNode, rangeStart, rangeEnd);
