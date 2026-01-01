@@ -2,7 +2,7 @@ import { ValueError } from './exceptions';
 import { TTSConfig } from './ttsConfig';
 
 // Browser-compatible Buffer utilities
-class BrowserBuffer {
+export class BrowserBuffer {
   static from(input: string | ArrayBuffer | Uint8Array, encoding?: string): Uint8Array {
     if (typeof input === 'string') {
       return new TextEncoder().encode(input);
